@@ -1,0 +1,19 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.vs/
+
+# 数据库文件
+*.db
+*.db-shm
+*.db-wal
+
+# 环境配置
+appsettings.Development.json
+
+# OS
+.DS_Store
+Thumbs.db
