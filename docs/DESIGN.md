@@ -618,6 +618,9 @@ flowchart LR
 | #7 | PostgreSQL 大小写 → `UnquoteTable()` + `pg_class.relname` 替代 `regclass` |
 | #8 | 中文 Unicode 转义 → `JavaScriptEncoder.UnsafeRelaxedJsonEscaping` |
 | #9 | 连接池复用 → `GetConnectionAsync()` 懒加载 + `SemaphoreSlim`（Phase 5.1） |
+| #10 | `::regclass` 大小写 → `pg_class.relname` JOIN（Phase 6 PG DDL） |
+| #11 | 查询超时 → `timeoutSeconds` 参数（Phase 7.2） |
+| #12 | 元数据缓存 → `ListTablesAsync` 30s TTL（Phase 7.3） |
 
 ### 已实战验证的工具
 
