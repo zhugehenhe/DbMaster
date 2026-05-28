@@ -331,12 +331,25 @@ public sealed class DatabaseTools
     // Phase 5.3: 导出数据
     // ================================================================
 
+    /// <summary>获取导出基础目录：优先 DBMASTER_EXPORT_DIR 环境变量，其次当前目录</summary>
+    private static string GetExportBaseDir() =>
+        Environment.GetEnvironmentVariable("DBMASTER_EXPORT_DIR")
+        ?? Directory.GetCurrentDirectory();
+
+    /// <summary>解析导出路径：相对路径基于工作区根目录，绝对路径保持不变</summary>
+    private static string ResolveExportPath(string filePath)
+    {
+        if (Path.IsPathRooted(filePath))
+            return filePath;
+        return Path.Combine(GetExportBaseDir(), filePath);
+    }
+
     [McpServerTool(Name = "db_export_data"),
-     Description("Export query results to a JSON or CSV file. Useful for data analysis, sharing, or backup.")]
+     Description("Export query results to a JSON or CSV file. Relative paths resolve to the VS Code workspace root. Useful for data analysis, sharing, or backup.")]
     public async Task<string> DbExportData(
         [Description("Connection alias")] string alias,
         [Description("SQL SELECT query to export")] string sql,
-        [Description("Output file path (e.g., 'export.json' or '/tmp/data.csv')")] string filePath,
+        [Description("Output file path (e.g., 'export.json' for workspace root, or absolute path like 'C:/data.csv')")] string filePath,
         [Description("Export format: 'json' or 'csv'")] string format = "json",
         [Description("Maximum rows to export. Default 10000.")] int maxRows = 10000,
         CancellationToken ct = default)
@@ -363,18 +376,20 @@ public sealed class DatabaseTools
             if (result.Rows.Count == 0)
                 return "Query returned no rows. Nothing to export.";
 
-            var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
+            // 解析路径：相对路径 → 工作区根目录
+            var resolvedPath = ResolveExportPath(filePath);
+            var dir = Path.GetDirectoryName(resolvedPath);
             if (dir is not null && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
 
             if (format == "json")
             {
                 var json = JsonSerializer.Serialize(result.Rows, JsonOptions);
-                await File.WriteAllTextAsync(filePath, json, ct);
+                await File.WriteAllTextAsync(resolvedPath, json, ct);
             }
             else // csv
             {
-                await using var writer = new StreamWriter(filePath);
+                await using var writer = new StreamWriter(resolvedPath);
                 // Header
                 var columns = ((Dictionary<string, object?>)result.Rows[0]).Keys.ToList();
                 await writer.WriteLineAsync(string.Join(",", columns.Select(EscapeCsv)));
@@ -390,7 +405,9 @@ public sealed class DatabaseTools
             }
 
             var truncatedMsg = result.Truncated ? $" (truncated from {result.RowCount}+ rows)" : "";
-            return $"Exported {result.RowCount} rows{truncatedMsg} to {Path.GetFullPath(filePath)} in {format} format. Elapsed: {result.Elapsed.TotalSeconds:F2}s";
+            var baseInfo = GetExportBaseDir() != Directory.GetCurrentDirectory()
+                ? $" (base: {GetExportBaseDir()})" : "";
+            return $"Exported {result.RowCount} rows{truncatedMsg} to {Path.GetFullPath(resolvedPath)} in {format} format{baseInfo}. Elapsed: {result.Elapsed.TotalSeconds:F2}s";
         }
         catch (Exception ex)
         {
