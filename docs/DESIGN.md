@@ -47,12 +47,45 @@ public interface IDbAdapter : IDisposable
 }
 ```
 
+## 连接判断方式 — AI 友好设计
+
+### 显式 dbType + auto 兜底
+
+数据库类型通过两种方式确定：
+
+| 方式 | 场景 | 示例 |
+|------|------|------|
+| **显式指定** | AI / 用户明确知道类型 | `db_connect(..., dbType="mysql")` |
+| **auto 自动** | 不确定类型，让系统检测 | `db_connect(..., dbType="auto")` |
+
+```csharp
+// AdapterFactory 核心逻辑
+public static IDbAdapter Create(string connStr, string? dbType = null)
+{
+    if (dbType is not null && dbType != "auto")
+        return FindByDbType(dbType);  // 精确匹配
+
+    return AutoDetect(connStr);       // 遍历注册的检测器
+}
+```
+
+### AI 发现流程
+
+```
+AI: db_list_supported_types()               ← 先了解有哪些类型
+    → sqlite / mysql / postgresql / sqlserver / auto
+
+AI: db_connect(alias="prod", connStr="...", dbType="mysql")  ← 明确指定
+    → "Connected to mysql database as 'prod'"
+```
+
 ### 连接管理
 
 ```
-Alias → ConnectionString → IDbAdapter → DbConnection
-"prod" → "Server=...;Database=..." → MySqlAdapter → MySqlConnection
-"dev"  → "Data Source=dev.db"      → SqliteAdapter → SqliteConnection
+Alias → dbType → IDbAdapter → DbConnection
+"prod" → "mysql"      → MySqlAdapter     → MySqlConnection
+"dev"  → "sqlite"     → SqliteAdapter    → SqliteConnection
+"auto" → (detected)   → (auto-detected)  → (matched driver)
 ```
 
 ## 数据库支持计划
@@ -70,12 +103,13 @@ Alias → ConnectionString → IDbAdapter → DbConnection
 
 | 工具 | 参数 | 说明 |
 |------|------|------|
-| `db_connect` | connectionString, alias | 建立数据库连接 |
+| `db_list_supported_types` | — | 列出支持的数据库类型及连接示例（AI 发现工具） |
+| `db_connect` | connectionString, alias, dbType | 建立数据库连接（dbType: auto/sqlite/mysql/postgresql/sqlserver） |
 | `db_disconnect` | alias | 断开连接 |
-| `db_list_connections` | — | 列出所有活动连接 |
+| `db_list_connections` | — | 列出所有活动连接及类型 |
 | `db_execute_query` | alias, sql, maxRows | 执行 SELECT 查询 |
 | `db_list_tables` | alias | 列出所有用户表 |
-| `db_describe_table` | alias, tableName | 查看表结构（列、类型、约束） |
+| `db_describe_table` | alias, tableName | 查看表结构（列、类型、约束、外键、索引） |
 | `db_execute_command` | alias, sql, confirm | 执行写操作（需确认） |
 | `db_table_stats` | alias | 统计所有表的行数和大小 |
 
@@ -333,16 +367,40 @@ public sealed class DatabaseTools
         _cm = connectionManager;
     }
 
-    [McpServerTool(Name = "db_connect"), Description("Connect to a database and assign an alias.")]
+    [McpServerTool(Name = "db_list_supported_types"),
+     Description("Lists all supported database types with connection string examples. Use this first to discover available options.")]
+    public static string DbListSupportedTypes()
+    {
+        return """
+            Supported database types (use with db_connect's dbType parameter):
+            
+            sqlite     — SQLite (file-based)
+                        Example: Data Source=path/to/db.sqlite
+            
+            mysql      — MySQL / MariaDB
+                        Example: Server=host;Port=3306;Database=db;User=root;Password=xxx
+            
+            postgresql — PostgreSQL
+                        Example: Host=host;Port=5432;Database=db;Username=postgres;Password=xxx
+            
+            sqlserver  — SQL Server
+                        Example: Server=host;Database=db;User Id=sa;Password=xxx;TrustServerCertificate=True
+            
+            auto       — Auto-detect from connection string (default)
+            """;
+    }
+
+    [McpServerTool(Name = "db_connect"), Description("Connect to a database and assign an alias for future queries.")]
     public async Task<string> DbConnect(
         [Description("Database connection string")] string connectionString,
         [Description("Short alias for this connection, e.g. 'prod' or 'dev'")] string alias,
+        [Description("Database type: 'auto', 'sqlite', 'mysql', 'postgresql', or 'sqlserver'")] string dbType = "auto",
         CancellationToken ct)
     {
         try
         {
-            var dbType = await _cm.ConnectAsync(alias, connectionString, ct);
-            return $"Connected to {dbType} database as '{alias}'.";
+            var detectedType = await _cm.ConnectAsync(alias, connectionString, dbType, ct);
+            return $"Connected to {detectedType} database as '{alias}'.";
         }
         catch (Exception ex)
         {
