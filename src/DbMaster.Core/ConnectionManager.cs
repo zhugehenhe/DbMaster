@@ -20,8 +20,9 @@ public sealed class ConnectionManager : IDisposable
     /// 建立新连接（或替换已有别名）。
     /// 若别名已存在，先释放旧连接再建立新连接。
     /// </summary>
+    /// <param name="dbType">null/"auto"=自动检测, "sqlite"|"mysql"|"postgresql"|"sqlserver"</param>
     /// <returns>检测到的数据库类型</returns>
-    public async Task<string> ConnectAsync(string alias, string connectionString, CancellationToken ct = default)
+    public async Task<string> ConnectAsync(string alias, string connectionString, string? dbType = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(alias);
 
@@ -29,7 +30,7 @@ public sealed class ConnectionManager : IDisposable
             throw new InvalidOperationException(
                 $"Connection limit reached ({MaxConnections}). Disconnect unused aliases first.");
 
-        var adapter = AdapterFactory.Create(connectionString);
+        var adapter = AdapterFactory.Create(connectionString, dbType);
         await adapter.TestConnectionAsync(ct);
 
         // 如果别名已存在，先释放旧连接（修复 #2：资源泄漏）

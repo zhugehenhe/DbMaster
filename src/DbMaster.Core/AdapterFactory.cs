@@ -27,14 +27,19 @@ public static class AdapterFactory
 
     /// <summary>
     /// 解析连接字符串并创建匹配的 IDbAdapter。
-    /// 按注册顺序依次尝试检测器，返回第一个匹配的适配器。
     /// </summary>
-    /// <exception cref="InvalidOperationException">无法识别的数据库类型</exception>
-    public static IDbAdapter Create(string connectionString)
+    /// <param name="connectionString">数据库连接字符串</param>
+    /// <param name="dbType">
+    /// 数据库类型，null 或 "auto" 表示自动检测。
+    /// 显式值： "sqlite", "mysql", "postgresql", "sqlserver"
+    /// </param>
+    /// <exception cref="ArgumentException">无效的 dbType 值</exception>
+    /// <exception cref="InvalidOperationException">无法识别数据库类型（auto 模式）</exception>
+    public static IDbAdapter Create(string connectionString, string? dbType = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        // 基础验证：连接串至少包含一个键值对
+        // 基础验证
         try
         {
             var test = new DbConnectionStringBuilder { ConnectionString = connectionString };
@@ -43,10 +48,26 @@ public static class AdapterFactory
         }
         catch (ArgumentException)
         {
-            throw; // 格式错误，直接向上抛出
+            throw;
         }
 
-        // 依次尝试已注册的检测器
+        // 显式 dbType → 直接查找注册的适配器
+        if (!string.IsNullOrEmpty(dbType) && dbType != "auto")
+        {
+            var normalized = dbType.ToLowerInvariant();
+            foreach (var detector in _detectors)
+            {
+                var adapter = detector(connectionString);
+                if (adapter is not null && adapter.DbType == normalized)
+                    return adapter;
+            }
+            throw new ArgumentException(
+                $"Unknown or unregistered database type: '{dbType}'. " +
+                "Supported types: sqlite, mysql, postgresql, sqlserver. " +
+                "Use 'auto' for automatic detection.");
+        }
+
+        // auto 模式 → 依次尝试检测器
         foreach (var detector in _detectors)
         {
             var adapter = detector(connectionString);
@@ -55,9 +76,8 @@ public static class AdapterFactory
         }
 
         throw new InvalidOperationException(
-            "Unable to detect database type from connection string. " +
-            "Supported types: SQLite, MySQL, PostgreSQL, SQL Server. " +
-            "Ensure the appropriate adapter package is installed and registered.");
+            "Unable to auto-detect database type. Try specifying dbType explicitly. " +
+            "Supported types: sqlite, mysql, postgresql, sqlserver.");
     }
 
     /// <summary>
