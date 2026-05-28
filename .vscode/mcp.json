@@ -1,0 +1,22 @@
+{
+  "servers": {
+    "DbMaster": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "src/DbMaster.Stdio/DbMaster.Stdio.csproj",
+        "-c",
+        "Release",
+        "--no-build"
+      ],
+      "cwd": "${workspaceFolder}/DbMaster",
+      "description": "DbMaster — 多数据库 MCP 工具 (SQLite/MySQL/PG/SQL Server)",
+      "disabled": false,
+      "env": {
+        "DOTNET_ENVIRONMENT": "Production"
+      }
+    }
+  }
+}

@@ -16,6 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\DbMaster.Core\DbMaster.Core.csproj" />
     <ProjectReference Include="..\DbMaster.Adapters\DbMaster.Adapters.csproj" />
+    <ProjectReference Include="..\DbMaster.Server\DbMaster.Server.csproj" />
   </ItemGroup>
 
 </Project>
