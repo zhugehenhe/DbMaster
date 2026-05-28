@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DbMaster.Adapters/DbMaster.Adapters.csproj" />
+    <Project Path="src/DbMaster.Client/DbMaster.Client.csproj" />
+    <Project Path="src/DbMaster.Core/DbMaster.Core.csproj" />
+    <Project Path="src/DbMaster.Server/DbMaster.Server.csproj" />
+    <Project Path="src/DbMaster.Stdio/DbMaster.Stdio.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DbMaster.Tests.csproj" />
+  </Folder>
+</Solution>
