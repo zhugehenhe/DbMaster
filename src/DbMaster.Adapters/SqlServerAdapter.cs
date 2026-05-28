@@ -8,6 +8,7 @@ public sealed class SqlServerAdapter : BaseDbAdapter
 {
     static SqlServerAdapter()
     {
+        AdapterFactory.RegisterFactory("sqlserver", cs => new SqlServerAdapter(cs));
         AdapterFactory.Register(cs =>
         {
             if ((AdapterFactory.HasKeyword(cs, "Server") || AdapterFactory.HasKeyword(cs, "Data Source")) &&

@@ -8,6 +8,7 @@ public sealed class SqliteAdapter : BaseDbAdapter
 {
     static SqliteAdapter()
     {
+        AdapterFactory.RegisterFactory("sqlite", cs => new SqliteAdapter(cs));
         AdapterFactory.Register(cs =>
         {
             if (AdapterFactory.HasKeyword(cs, "Data Source") &&

@@ -8,6 +8,7 @@ public sealed class PostgreSqlAdapter : BaseDbAdapter
 {
     static PostgreSqlAdapter()
     {
+        AdapterFactory.RegisterFactory("postgresql", cs => new PostgreSqlAdapter(cs));
         AdapterFactory.Register(cs =>
         {
             if (AdapterFactory.HasKeyword(cs, "Host") &&

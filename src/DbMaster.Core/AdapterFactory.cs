@@ -10,6 +10,7 @@ namespace DbMaster.Core;
 public static class AdapterFactory
 {
     private static readonly List<AdapterDetector> _detectors = [];
+    private static readonly Dictionary<string, Func<string, IDbAdapter>> _factories = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// 适配器检测器委托：接受连接字符串，返回适配器实例或 null（表示不匹配）。
@@ -23,6 +24,15 @@ public static class AdapterFactory
     {
         ArgumentNullException.ThrowIfNull(detector);
         _detectors.Add(detector);
+    }
+
+    /// <summary>
+    /// 注册一个直接工厂（修复 #13：显式 dbType 跳过关键字检测）。
+    /// 通常在 Adapters 项目的静态构造函数中，与 Register 一起调用。
+    /// </summary>
+    public static void RegisterFactory(string dbType, Func<string, IDbAdapter> factory)
+    {
+        _factories[dbType.ToLowerInvariant()] = factory;
     }
 
     /// <summary>
@@ -51,11 +61,16 @@ public static class AdapterFactory
             throw;
         }
 
-        // 显式 dbType → 直接查找注册的适配器
+        // 显式 dbType → 优先用直接工厂（不检查连接串关键字），fallback 到检测器
         if (!string.IsNullOrEmpty(dbType) && dbType != "auto")
         {
             var normalized = dbType.ToLowerInvariant();
-            // 优化 #3：用字典快速查找，避免遍历创建不匹配的 adapter 实例
+
+            // 修复 #13：优先用 RegisterFactory 注册的直接工厂
+            if (_factories.TryGetValue(normalized, out var factory))
+                return factory(connectionString);
+
+            // fallback：遍历检测器
             foreach (var detector in _detectors)
             {
                 var adapter = detector(connectionString);
@@ -63,7 +78,7 @@ public static class AdapterFactory
                 {
                     if (adapter.DbType == normalized)
                         return adapter;
-                    adapter.Dispose(); // 不匹配的立即释放
+                    adapter.Dispose();
                 }
             }
             throw new ArgumentException(

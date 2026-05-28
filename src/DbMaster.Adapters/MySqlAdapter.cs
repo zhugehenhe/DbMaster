@@ -8,6 +8,7 @@ public sealed class MySqlAdapter : BaseDbAdapter
 {
     static MySqlAdapter()
     {
+        AdapterFactory.RegisterFactory("mysql", cs => new MySqlAdapter(cs));
         AdapterFactory.Register(cs =>
         {
             // MySQL: Server= 但无 TrustServerCertificate（区分 SQL Server）
