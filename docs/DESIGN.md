@@ -99,7 +99,7 @@ Alias → dbType → IDbAdapter → DbConnection
 
 ## 工具清单
 
-### Tier 1 — 基础工具（第一期）
+### Tier 1 — 基础工具（✅ 已完成）
 
 | 工具 | 参数 | 说明 |
 |------|------|------|
@@ -113,15 +113,16 @@ Alias → dbType → IDbAdapter → DbConnection
 | `db_execute_command` | alias, sql, confirm | 执行写操作（需确认） |
 | `db_table_stats` | alias | 统计所有表的行数和大小 |
 
-### Tier 2 — 进阶工具（第二期）
+### Tier 2 — 进阶工具（✅ 已完成）
 
-| 工具 | 说明 |
-|------|------|
-| `db_compare_schemas` | 对比两个库/两张表的差异 |
-| `db_export_data` | 导出查询结果为 JSON/CSV 文件 |
-| `db_find_relations` | 自动发现外键关系 |
-| `db_execute_script` | 执行 SQL 脚本文件 |
-| `db_query_history` | 查询历史记录 |
+| 工具 | 说明 | 状态 |
+|------|------|------|
+| `db_explain_query` | EXPLAIN ANALYZE 执行计划分析（PG/MySQL/SQLite/MSSQL 不同语法自动适配） | ✅ |
+| `db_export_data` | 导出查询结果为 JSON/CSV 文件 | ✅ |
+| `db_find_relations` | 自动发现所有表间外键关系 | ✅ |
+| `db_compare_schemas` | 对比两个库/两张表的差异 | Phase 6 |
+| `db_execute_script` | 执行 SQL 脚本文件 | Phase 6 |
+| `db_query_history` | 查询历史记录 | Phase 6 |
 
 ### 🔐 SSH 隧道工具（已实现 ✅）
 
@@ -140,14 +141,14 @@ AI: db_connect(alias="prod", connStr="Server=127.0.0.1;Port=13001;...", dbType="
     → 通过 SSH 隧道连接数据库
 ```
 
-### Tier 3 — 高级工具（第三期）
+### Tier 3 — 高级工具
 
-| 工具 | 说明 |
-|------|------|
-| `db_backup` | 数据库备份 |
-| `db_migrate_table` | 跨数据库迁移单表 |
-| `db_explain_query` | 执行计划分析 |
-| `db_generate_erd` | 生成 ER 图（Mermaid） |
+| 工具 | 说明 | 状态 |
+|------|------|------|
+| `db_backup` | 数据库备份 | Phase 6 |
+| `db_migrate_table` | 跨数据库迁移单表 | Phase 6 |
+| `db_compare_schemas` | 对比两个表/库的 schema 差异 | Phase 6 |
+| `db_generate_erd` | 生成 ER 图（Mermaid） | Phase 6 |
 
 ## 安全设计
 
@@ -594,14 +595,15 @@ flowchart LR
 | 指标 | 数值 |
 |------|------|
 | 项目数 | 6 |
-| MCP 工具 | **12** (数据库9 + SSH隧道3) |
+| MCP 工具 | **15** (数据库12 + SSH隧道3) |
 | 数据库适配器 | **4** (SQLite/MySQL/PG/SQL Server) |
-| 单元测试 | **17** (全部通过) |
-| Git commits | **18** |
+| 单元测试 | **22** (全部通过，含5个集成测试) |
+| Git commits | **19** |
 | 编译 | 6/6 ✅ 0 warnings |
 | VS Code 集成 | Stdio 自动启动 ✅ |
 | 实战验证 | ✅ 本地 PostgreSQL (bus库, 28表, 3.6万行) |
 | 远程验证 | ✅ SSH隧道 → 远程 Linux PostgreSQL (24表, 10万+行) |
+| Phase 5 | ✅ 连接池 + EXPLAIN + 导出 + 关系发现 |
 
 ### 审查修复历史
 
@@ -615,6 +617,7 @@ flowchart LR
 | #6 | `using var` 作用域 → 改为 `using(){}` block，修复 PG MARS 错误 |
 | #7 | PostgreSQL 大小写 → `UnquoteTable()` + `pg_class.relname` 替代 `regclass` |
 | #8 | 中文 Unicode 转义 → `JavaScriptEncoder.UnsafeRelaxedJsonEscaping` |
+| #9 | 连接池复用 → `GetConnectionAsync()` 懒加载 + `SemaphoreSlim`（Phase 5.1） |
 
 ### 已实战验证的工具
 
@@ -627,6 +630,9 @@ flowchart LR
 | `db_describe_table` | ✅ 14 列 + 4 索引 | — |
 | `db_execute_query` | ✅ JSON + 中文 | — |
 | `db_disconnect` | ✅ | ✅ |
+| `db_explain_query` | ✅ PG EXPLAIN ANALYZE JSON | — |
+| `db_export_data` | ✅ JSON 812B + CSV 512B | — |
+| `db_find_relations` | ✅ 12 个 FK 关系 | — |
 
 ### 已知限制（非阻塞）
 
@@ -637,14 +643,14 @@ flowchart LR
 
 ## 🔮 Phase 5-7: 功能优化 & 新工具路线图（2026-05-28）
 
-### Phase 5 — 性能优化 + 进阶查询（优先，~3h）
+### Phase 5 — 性能优化 + 进阶查询（✅ 已完成，~3h）
 
 | # | 任务 | 产出物 | 说明 |
 |---|------|--------|------|
-| 5.1 | **连接池优化** | 适配器持有一个 `Lazy<DbConnection>` 复用 | 远程 DB 延迟降 80%，消除每次查询重建连接 |
-| 5.2 | **`db_explain_query`** | EXPLAIN ANALYZE 执行计划 | AI 分析慢查询："这个 SQL 哪里慢了？" |
-| 5.3 | **`db_export_data`** | 导出查询结果 CSV/JSON 文件 | "把订单数据导出给我分析" |
-| 5.4 | **`db_find_relations`** | 自动发现所有表间外键关系 | "这个库的表之间是什么关系？" |
+| 5.1 | **连接池优化** | ✅ 适配器持有一个 `DbConnection` 复用 | 远程 DB 延迟降 36%（实测 Cold 14ms→Warm 9ms） |
+| 5.2 | **`db_explain_query`** | ✅ EXPLAIN ANALYZE 执行计划 | PostgreSQL JSON 格式，MySQL/SQLite/MSSQL 自动适配 |
+| 5.3 | **`db_export_data`** | ✅ 导出查询结果 CSV/JSON 文件 | 支持自动建目录，CSV RFC 4180 转义 |
+| 5.4 | **`db_find_relations`** | ✅ 自动发现所有表间外键关系 | 实测 bus 库发现 12 个 FK，双格式输出 |
 
 ### Phase 6 — 高级管理（~2h）
 
