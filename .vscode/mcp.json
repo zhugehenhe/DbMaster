@@ -2,7 +2,7 @@
   "servers": {
     "DbMaster": {
       "type": "stdio",
-      "command": "publish/DbMaster.Stdio.exe",
+      "command": "DbMaster",
       "cwd": "${workspaceFolder}/DbMaster",
       "env": {
         "DBMASTER_EXPORT_DIR": "${workspaceFolder}"
