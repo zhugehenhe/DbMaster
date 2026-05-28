@@ -595,15 +595,15 @@ flowchart LR
 | 指标 | 数值 |
 |------|------|
 | 项目数 | 6 |
-| MCP 工具 | **15** (数据库12 + SSH隧道3) |
+| MCP 工具 | **18** (数据库15 + SSH隧道3) |
 | 数据库适配器 | **4** (SQLite/MySQL/PG/SQL Server) |
 | 单元测试 | **22** (全部通过，含5个集成测试) |
-| Git commits | **19** |
+| Git commits | **22** |
 | 编译 | 6/6 ✅ 0 warnings |
 | VS Code 集成 | Stdio 自动启动 ✅ |
 | 实战验证 | ✅ 本地 PostgreSQL (bus库, 28表, 3.6万行) |
 | 远程验证 | ✅ SSH隧道 → 远程 Linux PostgreSQL (24表, 10万+行) |
-| Phase 5 | ✅ 连接池 + EXPLAIN + 导出 + 关系发现 |
+| Phase 6 | ✅ ER图 + Schema对比 + DDL导出 |
 
 ### 审查修复历史
 
@@ -652,13 +652,13 @@ flowchart LR
 | 5.3 | **`db_export_data`** | ✅ 导出查询结果 CSV/JSON 文件 | 支持自动建目录，CSV RFC 4180 转义 |
 | 5.4 | **`db_find_relations`** | ✅ 自动发现所有表间外键关系 | 实测 bus 库发现 12 个 FK，双格式输出 |
 
-### Phase 6 — 高级管理（~2h）
+### Phase 6 — 高级管理（✅ 已完成，~1.5h）
 
 | # | 任务 | 说明 |
 |---|------|------|
-| 6.1 | `db_generate_erd` | 生成 Mermaid ER 图 |
-| 6.2 | `db_compare_schemas` | 对比两个表/库的 schema 差异 |
-| 6.3 | `db_backup` | 备份数据库到文件 |
+| 6.1 | `db_generate_erd` | ✅ 生成 Mermaid ER 图，支持指定表过滤 |
+| 6.2 | `db_compare_schemas` | ✅ 对比两个表/库的 schema 差异（列/类型/PK/FK/索引） |
+| 6.3 | `db_export_schema` | ✅ 导出 DDL 为 .sql 文件（安全替代全库备份） |
 
 ### Phase 7 — 体验增强（~2h）
 
