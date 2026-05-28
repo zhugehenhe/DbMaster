@@ -488,3 +488,114 @@ tests/DbMaster.Tests/
 | DbMaster.Server | `ModelContextProtocol.AspNetCore` |
 | DbMaster.Stdio | `ModelContextProtocol` + `Microsoft.Extensions.Hosting` |
 | DbMaster.Tests | `xUnit` + `ModelContextProtocol` |
+
+---
+
+## 实施流程计划（4 Phase，预计 10-15h）
+
+> 基于 [McpDemo 项目经验](../demo/McpDemo) 的踩坑总结，每条步骤均已预判规避已知问题。
+
+```mermaid
+flowchart LR
+    P1["🔵 Phase 1\n核心骨架\n(3h)"] --> P2["🟡 Phase 2\nSQLite+工具\n(3h)"]
+    P2 --> P3["🟠 Phase 3\nMySQL+PG\n(3h)"]
+    P3 --> P4["🟢 Phase 4\nStdio+测试\n(3h)"]
+```
+
+### Phase 1 — 核心骨架（Day 1 上午，~3h）
+
+**目标**: 项目可编译，接口和模型定义完
+
+| # | 任务 | 产出物 | 参考 |
+|---|------|--------|------|
+| 1.1 | 创建 `DbMaster.sln` + 6 个 `.csproj` | 解决方案 + 项目文件 | McpDemo 结构 |
+| 1.2 | Core 模型定义 | `QueryResult`, `TableInfo`, `ColumnInfo`, `TableSchema`, `ForeignKeyInfo`, `IndexInfo` | DESIGN.md §核心模型 |
+| 1.3 | `IDbAdapter` 接口 | 6 个方法的统一接口 | 适配器模式 |
+| 1.4 | `ConnectionManager` | ConcurrentDictionary 连接池 | DESIGN.md §连接管理 |
+| 1.5 | `AdapterFactory` | 自动检测连接串 → 创建适配器 | 工厂模式 |
+| 1.6 | NuGet 还原 + `dotnet build` | ✅ 6 项目全部通过 | — |
+
+**验证**: `dotnet build DbMaster.sln` 零错误 ✅
+
+---
+
+### Phase 2 — SQLite 适配器 + MCP 工具（Day 1 下午，~3h）
+
+**目标**: 第一个完整适配器 + AI 可调用
+
+| # | 任务 | 产出物 | 对应工具 |
+|---|------|--------|----------|
+| 2.1 | `SqliteAdapter` 完整实现 | 6 个接口方法 | — |
+| 2.2 | `DbMaster.Server/Program.cs` | HTTP MCP Server 注册 | — |
+| 2.3 | `Tools/DatabaseTools.cs` | `[McpServerToolType]` 特性标注 | Tier1 全部 8 个 |
+| 2.4 | HTTP 启动 + curl 测试 | `POST /mcp` → 200 OK | 验证端点 |
+| 2.5 | `CoreTests`（契约测试） | 接口行为一致性 | — |
+| 2.6 | `SqliteAdapterTests`（内存DB） | 查询/表结构/写操作 | 10+ 测试 |
+
+**验证**:
+- `dotnet run` → curl `initialize` → `tools/list` → `db_connect` → `db_execute_query` ✅
+- 单元测试 ≥ 15 通过 ✅
+
+**踩坑预判**:
+- ⚠️ `MapMcp("/mcp")` 显式路径
+- ⚠️ 不启用 `UseHttpsRedirection()`
+- ⚠️ `McpServerToolType` DI 注入 `ConnectionManager` 需注册为 Singleton
+
+---
+
+### Phase 3 — MySQL + PostgreSQL 适配器（Day 2，~3h）
+
+**目标**: 多数据库切换，适配器模式价值验证
+
+| # | 任务 | 产出物 |
+|---|------|--------|
+| 3.1 | `MySqlAdapter` — MySqlConnector | 完整实现 |
+| 3.2 | `PostgreSqlAdapter` — Npgsql | 完整实现 |
+| 3.3 | `SqlServerAdapter` — Microsoft.Data.SqlClient | 完整实现 |
+| 3.4 | 完善 `AdapterFactory` 自动检测 | 4 种连接串全部识别 |
+| 3.5 | 适配器测试：每种 ≥ 3 个 | 连接/查询/表结构 |
+
+**验证**: 同一套 `DatabaseTools`，切换 alias 即可操作不同数据库 ✅
+
+---
+
+### Phase 4 — Stdio + 客户端 + 文档（Day 3，~3h）
+
+**目标**: VS Code 自动连接、测试完整、文档就绪
+
+| # | 任务 | 产出物 |
+|---|------|--------|
+| 4.1 | `DbMaster.Stdio/Program.cs` | Stdio 模式（⚠️ `ClearProviders` + `SetMinimumLevel(None)`） |
+| 4.2 | `.vscode/mcp.json` | VS Code 一键连接 |
+| 4.3 | `DbMaster.Client/Program.cs` | 端到端测试 |
+| 4.4 | 补充测试到 40+ | 覆盖所有适配器 + 工具 |
+| 4.5 | 更新 README + git commit | 最终文档 |
+
+**最终验证**:
+- VS Code 自动连接 + 发现工具 ✅
+- AI 切换连接操作不同数据库 ✅
+- 全部测试通过 ✅
+
+---
+
+### 关键决策一览
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 工具注册 | `[McpServerToolType]` 特性 | McpDemo 验证可靠 |
+| 连接串存储 | 内存 `ConcurrentDictionary` | 重启丢失 = 安全 |
+| SQL 访问 | 原生 ADO.NET | 最轻量，Dapper 可选 |
+| 错误返回 | `return "Error: {msg}"` | AI 友好，不抛异常 |
+| 测试数据库 | SQLite InMemory / Docker | 无需外部依赖 |
+| 连接串检测 | `DbConnectionStringBuilder` 启发式 | 无额外配置 |
+
+### 与 McpDemo 的复用关系
+
+| 从 McpDemo 复用 | 在 DbMaster 中的体现 |
+|-----------------|---------------------|
+| 工具定义模式 (`[McpServerToolType]`) | `DatabaseTools.cs` |
+| 测试基类 (`McpTestBase`) | `DbMaster.Tests` |
+| VS Code 配置 (`.vscode/mcp.json`) | Stdio 自动启动 |
+| Stdio 日志处理 (`ClearProviders`) | `DbMaster.Stdio/Program.cs` |
+| 安全分级 (SELECT/INSERT/DROP) | 三级 confirm 机制 |
+| 路径 API 设计 (`MapMcp("/mcp")`) | HTTP Server |
