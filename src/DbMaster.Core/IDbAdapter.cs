@@ -15,6 +15,9 @@ public interface IDbAdapter : IDisposable
     /// <summary>执行只读查询（SELECT/WITH/PRAGMA）</summary>
     Task<QueryResult> QueryAsync(string sql, int maxRows, CancellationToken ct = default);
 
+    /// <summary>执行只读查询，指定超时秒数（Phase 7.2）</summary>
+    Task<QueryResult> QueryAsync(string sql, int maxRows, int timeoutSeconds, CancellationToken ct = default);
+
     /// <summary>执行写操作（INSERT/UPDATE/DELETE/DDL）</summary>
     Task<int> ExecuteAsync(string sql, CancellationToken ct = default);
 

@@ -12,21 +12,52 @@ public sealed class SshTunnelManager : IDisposable
     private readonly ConcurrentDictionary<int, TunnelEntry> _tunnels = new();
     private int _nextPort = 13000;
 
-    /// <summary>建立 SSH 隧道（本地端口 → 远程地址:端口）</summary>
+    /// <summary>建立 SSH 隧道（本地端口 → 远程地址:端口），支持密码或密钥认证</summary>
     /// <returns>分配的本地端口号</returns>
     public async Task<int> CreateTunnelAsync(
         string sshHost, int sshPort, string sshUser, string sshPassword,
-        string remoteHost, int remotePort, CancellationToken ct = default)
+        string remoteHost, int remotePort,
+        string? sshPrivateKey = null, string? sshPrivateKeyPassphrase = null,
+        CancellationToken ct = default)
     {
         var localPort = Interlocked.Increment(ref _nextPort);
 
-        var client = new SshClient(sshHost, sshPort, sshUser, sshPassword);
+        SshClient client;
+
+        if (!string.IsNullOrEmpty(sshPrivateKey))
+        {
+            // 密钥认证 — 支持文件路径或 PEM 内容
+            if (File.Exists(sshPrivateKey))
+            {
+                var key = string.IsNullOrEmpty(sshPrivateKeyPassphrase)
+                    ? new PrivateKeyFile(sshPrivateKey)
+                    : new PrivateKeyFile(sshPrivateKey, sshPrivateKeyPassphrase);
+                client = new SshClient(sshHost, sshPort, sshUser, key);
+            }
+            else
+            {
+                // 当作 PEM 内容处理
+                using var ms = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(sshPrivateKey));
+                var key = string.IsNullOrEmpty(sshPrivateKeyPassphrase)
+                    ? new PrivateKeyFile(ms)
+                    : new PrivateKeyFile(ms, sshPrivateKeyPassphrase);
+                client = new SshClient(sshHost, sshPort, sshUser, key);
+            }
+        }
+        else
+        {
+            client = new SshClient(sshHost, sshPort, sshUser, sshPassword);
+        }
+
         var forwardedPort = new ForwardedPortLocal(
             "127.0.0.1", (uint)localPort, remoteHost, (uint)remotePort);
 
-        client.Connect();
-        client.AddForwardedPort(forwardedPort);
-        forwardedPort.Start();
+        await Task.Run(() =>
+        {
+            client.Connect();
+            client.AddForwardedPort(forwardedPort);
+            forwardedPort.Start();
+        }, ct);
 
         _tunnels[localPort] = new TunnelEntry(client, forwardedPort);
         return localPort;

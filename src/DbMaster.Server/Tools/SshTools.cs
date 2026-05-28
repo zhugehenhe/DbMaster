@@ -19,23 +19,29 @@ public sealed class SshTools
     }
 
     [McpServerTool(Name = "db_ssh_tunnel"),
-     Description("Create an SSH tunnel to a remote server. Use the returned local port with db_connect to access databases without public ports.")]
+     Description("Create an SSH tunnel to a remote server. Supports password or private key authentication. Use the returned local port with db_connect to access databases without public ports.")]
     public async Task<string> DbSshTunnel(
         [Description("SSH server hostname or IP")] string sshHost,
         [Description("SSH username")] string sshUser,
-        [Description("SSH password")] string sshPassword,
+        [Description("SSH password (optional if using private key)")] string sshPassword,
         [Description("Remote database host (from SSH server's perspective, usually 127.0.0.1)")]
         string remoteHost,
         [Description("Remote database port, e.g. 3306 for MySQL, 5432 for PostgreSQL")] int remotePort,
         [Description("SSH port, default 22")] int sshPort = 22,
+        [Description("SSH private key file path or PEM content (optional, preferred over password)")]
+        string? sshPrivateKey = null,
+        [Description("Passphrase for the private key, if encrypted")] string? sshPrivateKeyPassphrase = null,
         CancellationToken ct = default)
     {
         try
         {
             var localPort = await _tunnel.CreateTunnelAsync(
-                sshHost, sshPort, sshUser, sshPassword, remoteHost, remotePort, ct);
+                sshHost, sshPort, sshUser, sshPassword, remoteHost, remotePort,
+                sshPrivateKey, sshPrivateKeyPassphrase, ct);
 
-            return $"SSH tunnel established!\n" +
+            var authMethod = !string.IsNullOrEmpty(sshPrivateKey) ? "key" : "password";
+
+            return $"SSH tunnel established! (auth: {authMethod})\n" +
                    $"  SSH: {sshUser}@{sshHost}:{sshPort}\n" +
                    $"  Tunnel: localhost:{localPort} → {remoteHost}:{remotePort}\n" +
                    $"  Next: db_connect(alias=\"...\", connStr=\"Server=127.0.0.1;Port={localPort};Database=...;...\", dbType=\"...\")";

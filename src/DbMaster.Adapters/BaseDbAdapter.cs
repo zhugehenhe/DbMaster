@@ -15,6 +15,11 @@ public abstract class BaseDbAdapter : IDbAdapter
     private DbConnection? _connection;
     private readonly SemaphoreSlim _connLock = new(1, 1);
 
+    // Phase 7.3: 表元数据缓存
+    private IReadOnlyList<TableInfo>? _cachedTables;
+    private DateTime _cacheTime = DateTime.MinValue;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(30);
+
     protected BaseDbAdapter(string connectionString)
     {
         ConnectionString = connectionString;
@@ -131,6 +136,12 @@ public abstract class BaseDbAdapter : IDbAdapter
 
     public async Task<QueryResult> QueryAsync(string sql, int maxRows, CancellationToken ct = default)
     {
+        return await QueryAsync(sql, maxRows, 30, ct);
+    }
+
+    /// <summary>Phase 7.2: 带超时的查询</summary>
+    public async Task<QueryResult> QueryAsync(string sql, int maxRows, int timeoutSeconds, CancellationToken ct = default)
+    {
         var sw = Stopwatch.StartNew();
         var rows = new List<Dictionary<string, object?>>();
         var truncated = false;
@@ -139,7 +150,7 @@ public abstract class BaseDbAdapter : IDbAdapter
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
-        cmd.CommandTimeout = 30;
+        cmd.CommandTimeout = Math.Max(1, timeoutSeconds);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         var count = 0;
@@ -168,8 +179,14 @@ public abstract class BaseDbAdapter : IDbAdapter
 
     public async Task<IReadOnlyList<TableInfo>> ListTablesAsync(CancellationToken ct = default)
     {
+        // Phase 7.3: 元数据缓存（30s TTL）
+        if (_cachedTables is not null && (DateTime.UtcNow - _cacheTime) < CacheTtl)
+            return _cachedTables;
+
         var conn = await GetConnectionAsync(ct);
-        return await QueryTablesAsync(conn, ct);
+        _cachedTables = await QueryTablesAsync(conn, ct);
+        _cacheTime = DateTime.UtcNow;
+        return _cachedTables;
     }
 
     public async Task<TableSchema> DescribeTableAsync(string tableName, CancellationToken ct = default)

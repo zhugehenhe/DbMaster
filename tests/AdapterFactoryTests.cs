@@ -105,6 +105,7 @@ public class AdapterFactoryTests
         public string DbType => _type;
         public Task<bool> TestConnectionAsync(CancellationToken ct = default) => Task.FromResult(true);
         public Task<QueryResult> QueryAsync(string sql, int maxRows, CancellationToken ct = default) => Task.FromResult(new QueryResult());
+        public Task<QueryResult> QueryAsync(string sql, int maxRows, int timeoutSeconds, CancellationToken ct = default) => Task.FromResult(new QueryResult());
         public Task<int> ExecuteAsync(string sql, CancellationToken ct = default) => Task.FromResult(0);
         public Task<IReadOnlyList<TableInfo>> ListTablesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<TableInfo>>([]);
         public Task<TableSchema> DescribeTableAsync(string tableName, CancellationToken ct = default) => Task.FromResult(new TableSchema());

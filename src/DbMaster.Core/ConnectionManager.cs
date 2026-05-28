@@ -71,6 +71,7 @@ public sealed class ConnectionManager : IDisposable
         public string DbType => "pending";
         public Task<bool> TestConnectionAsync(CancellationToken ct) => Task.FromResult(false);
         public Task<QueryResult> QueryAsync(string s, int m, CancellationToken ct) => throw new InvalidOperationException();
+        public Task<QueryResult> QueryAsync(string s, int m, int to, CancellationToken ct) => throw new InvalidOperationException();
         public Task<int> ExecuteAsync(string s, CancellationToken ct) => throw new InvalidOperationException();
         public Task<IReadOnlyList<TableInfo>> ListTablesAsync(CancellationToken ct) => throw new InvalidOperationException();
         public Task<TableSchema> DescribeTableAsync(string t, CancellationToken ct) => throw new InvalidOperationException();

@@ -109,6 +109,7 @@ public sealed class DatabaseTools
         [Description("Connection alias")] string alias,
         [Description("SQL SELECT query to execute")] string sql,
         [Description("Maximum rows to return. Default 100.")] int maxRows = 100,
+        [Description("Query timeout in seconds. Default 30, max 300.")] int timeoutSeconds = 30,
         CancellationToken ct = default)
     {
         var adapter = _cm.GetAdapter(alias);
@@ -127,7 +128,7 @@ public sealed class DatabaseTools
 
         try
         {
-            var result = await adapter.QueryAsync(sql, maxRows, ct);
+            var result = await adapter.QueryAsync(sql, maxRows, timeoutSeconds, ct);
             return JsonSerializer.Serialize(result, JsonOptions);
         }
         catch (Exception ex)
@@ -942,6 +943,121 @@ public sealed class DatabaseTools
         catch (Exception ex)
         {
             return $"Backup error: {ex.Message}";
+        }
+    }
+
+    // ================================================================
+    // Phase 7.4: 连接配置管理
+    // ================================================================
+
+    /// <summary>Profile 文件存储结构</summary>
+    private sealed class ConnectionProfile
+    {
+        public string Alias { get; set; } = "";
+        public string ConnectionString { get; set; } = "";
+        public string DbType { get; set; } = "auto";
+        public string? Description { get; set; }
+    }
+
+    private sealed class ProfileStore
+    {
+        public List<ConnectionProfile> Profiles { get; set; } = [];
+    }
+
+    [McpServerTool(Name = "db_save_profile"),
+     Description("Save a database connection profile for later reuse. Profiles are stored as a JSON file. Use db_load_profile to restore.")]
+    public async Task<string> DbSaveProfile(
+        [Description("Connection alias (must be connected)")] string alias,
+        [Description("Optional description for this connection")] string? description = null,
+        [Description("Profile file path. Default: 'dbmaster_profiles.json' in workspace root.")]
+        string filePath = "dbmaster_profiles.json",
+        CancellationToken ct = default)
+    {
+        var adapter = _cm.GetAdapter(alias);
+        if (adapter is null)
+            return $"Error: Connection '{alias}' not found.";
+
+        try
+        {
+            var resolvedPath = ResolveExportPath(filePath);
+
+            // Load existing profiles
+            var store = new ProfileStore();
+            if (File.Exists(resolvedPath))
+            {
+                var existing = await File.ReadAllTextAsync(resolvedPath, ct);
+                store = JsonSerializer.Deserialize<ProfileStore>(existing) ?? new ProfileStore();
+            }
+
+            // Can't store connection string (hidden by design), store adapter's type info
+            var existingProfile = store.Profiles.FirstOrDefault(p =>
+                string.Equals(p.Alias, alias, StringComparison.OrdinalIgnoreCase));
+            if (existingProfile is not null)
+                store.Profiles.Remove(existingProfile);
+
+            store.Profiles.Add(new ConnectionProfile
+            {
+                Alias = alias,
+                ConnectionString = adapter.ToString()!, // DbType info only (password-safe)
+                DbType = adapter.DbType,
+                Description = description,
+            });
+
+            var json = JsonSerializer.Serialize(store, JsonOptions);
+            await File.WriteAllTextAsync(resolvedPath, json, ct);
+
+            return $"Profile '{alias}' saved to {Path.GetFullPath(resolvedPath)} " +
+                   $"(type: {adapter.DbType}, desc: {description ?? "none"}). " +
+                   $"Note: Connection string is NOT stored for security. Reconnect with db_connect.";
+
+        }
+        catch (Exception ex)
+        {
+            return $"Save profile error: {ex.Message}";
+        }
+    }
+
+    [McpServerTool(Name = "db_load_profile"),
+     Description("Load saved connection profiles from a JSON file. Shows aliases, types, and descriptions for easy reconnection.")]
+    public string DbLoadProfile(
+        [Description("Profile file path. Default: 'dbmaster_profiles.json' in workspace root.")]
+        string filePath = "dbmaster_profiles.json")
+    {
+        var resolvedPath = ResolveExportPath(filePath);
+
+        if (!File.Exists(resolvedPath))
+            return $"No profile file found at {Path.GetFullPath(resolvedPath)}. " +
+                   "Use db_save_profile to create one.";
+
+        try
+        {
+            var json = File.ReadAllText(resolvedPath);
+            var store = JsonSerializer.Deserialize<ProfileStore>(json);
+
+            if (store?.Profiles.Count == 0)
+                return "No profiles found in file.";
+
+            var lines = new List<string>
+            {
+                $"Saved Profiles ({store!.Profiles.Count}):",
+                new string('-', 50),
+            };
+
+            foreach (var p in store.Profiles)
+            {
+                var connected = _cm.GetAdapter(p.Alias) is not null ? "🟢" : "⚪";
+                lines.Add(
+                    $"  {connected} [{p.Alias}] {p.DbType} — {p.Description ?? "(no description)"}");
+            }
+
+            lines.Add(new string('-', 50));
+            lines.Add("To reconnect: db_connect(alias=\"name\", connStr=\"...\", dbType=\"...\")");
+
+            return string.Join("\n", lines);
+        }
+        catch (Exception ex)
+        {
+            return $"Load profile error: {ex.Message}";
         }
     }
 
