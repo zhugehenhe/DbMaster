@@ -5,12 +5,15 @@ using DbMaster.Core;
 namespace DbMaster.Adapters;
 
 /// <summary>
-/// 适配器基类 — 提取公共的 QueryAsync 实现。
+/// 适配器基类 — 提取公共的 QueryAsync 实现 + 连接池优化（Phase 5.1）。
 /// 子类只需提供 CreateConnection 和数据库特定的元数据查询。
 /// </summary>
 public abstract class BaseDbAdapter : IDbAdapter
 {
     protected readonly string ConnectionString;
+
+    private DbConnection? _connection;
+    private readonly SemaphoreSlim _connLock = new(1, 1);
 
     protected BaseDbAdapter(string connectionString)
     {
@@ -44,6 +47,9 @@ public abstract class BaseDbAdapter : IDbAdapter
     protected virtual Task<string?> QueryCreateSqlAsync(DbConnection conn, string tableName, CancellationToken ct)
         => Task.FromResult<string?>(null);
 
+    /// <summary>子类实现：EXPLAIN 语法前缀（可选，默认 EXPLAIN）</summary>
+    protected virtual string ExplainPrefix(string sql) => $"EXPLAIN {sql}";
+
     /// <summary>验证表名仅包含安全字符</summary>
     protected static void ValidateTableName(string name)
     {
@@ -54,6 +60,54 @@ public abstract class BaseDbAdapter : IDbAdapter
         if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z0-9_\-]+$"))
             throw new ArgumentException(
                 "Table name contains invalid characters. Only letters, numbers, underscores, and hyphens allowed.");
+    }
+
+    // ================================================================
+    // Phase 5.1: 连接池 — 单连接复用，消除每次查询重建开销
+    // ================================================================
+
+    /// <summary>获取或创建复用的数据库连接（线程安全）</summary>
+    protected async Task<DbConnection> GetConnectionAsync(CancellationToken ct = default)
+    {
+        if (_connection is not null)
+            return _connection;
+
+        await _connLock.WaitAsync(ct);
+        try
+        {
+            if (_connection is null)
+            {
+                _connection = CreateConnection();
+                await _connection.OpenAsync(ct);
+            }
+            return _connection;
+        }
+        finally
+        {
+            _connLock.Release();
+        }
+    }
+
+    /// <summary>重置连接（连接断开后重建）</summary>
+    protected async Task<DbConnection> ResetConnectionAsync(CancellationToken ct = default)
+    {
+        await _connLock.WaitAsync(ct);
+        try
+        {
+            if (_connection is not null)
+            {
+                try { await _connection.CloseAsync(); } catch { /* ignore */ }
+                try { await _connection.DisposeAsync(); } catch { /* ignore */ }
+                _connection = null;
+            }
+            _connection = CreateConnection();
+            await _connection.OpenAsync(ct);
+            return _connection;
+        }
+        finally
+        {
+            _connLock.Release();
+        }
     }
 
     public async Task<bool> TestConnectionAsync(CancellationToken ct = default)
@@ -71,14 +125,17 @@ public abstract class BaseDbAdapter : IDbAdapter
         }
     }
 
+    // ================================================================
+    // 核心方法（使用复用连接）
+    // ================================================================
+
     public async Task<QueryResult> QueryAsync(string sql, int maxRows, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
         var rows = new List<Dictionary<string, object?>>();
         var truncated = false;
 
-        await using var conn = CreateConnection();
-        await conn.OpenAsync(ct);
+        var conn = await GetConnectionAsync(ct);
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
@@ -102,8 +159,7 @@ public abstract class BaseDbAdapter : IDbAdapter
 
     public async Task<int> ExecuteAsync(string sql, CancellationToken ct = default)
     {
-        await using var conn = CreateConnection();
-        await conn.OpenAsync(ct);
+        var conn = await GetConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         cmd.CommandTimeout = 30;
@@ -112,15 +168,13 @@ public abstract class BaseDbAdapter : IDbAdapter
 
     public async Task<IReadOnlyList<TableInfo>> ListTablesAsync(CancellationToken ct = default)
     {
-        await using var conn = CreateConnection();
-        await conn.OpenAsync(ct);
+        var conn = await GetConnectionAsync(ct);
         return await QueryTablesAsync(conn, ct);
     }
 
     public async Task<TableSchema> DescribeTableAsync(string tableName, CancellationToken ct = default)
     {
-        await using var conn = CreateConnection();
-        await conn.OpenAsync(ct);
+        var conn = await GetConnectionAsync(ct);
 
         return new TableSchema
         {
@@ -133,5 +187,30 @@ public abstract class BaseDbAdapter : IDbAdapter
         };
     }
 
-    public virtual void Dispose() { }
+    // ================================================================
+    // Phase 5.2: EXPLAIN 分析
+    // ================================================================
+
+    /// <summary>执行 EXPLAIN 查询，返回执行计划</summary>
+    public async Task<QueryResult> ExplainAsync(string sql, int maxRows, CancellationToken ct = default)
+    {
+        var explainSql = ExplainPrefix(sql);
+        return await QueryAsync(explainSql, maxRows, ct);
+    }
+
+    public virtual void Dispose()
+    {
+        _connLock.Wait();
+        try
+        {
+            _connection?.Close();
+            _connection?.Dispose();
+            _connection = null;
+        }
+        finally
+        {
+            _connLock.Release();
+            _connLock.Dispose();
+        }
+    }
 }

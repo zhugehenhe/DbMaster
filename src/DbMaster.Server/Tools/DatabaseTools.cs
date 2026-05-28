@@ -292,4 +292,202 @@ public sealed class DatabaseTools
             return $"Error getting stats: {ex.Message}";
         }
     }
+
+    // ================================================================
+    // Phase 5.2: EXPLAIN 执行计划分析
+    // ================================================================
+
+    [McpServerTool(Name = "db_explain_query"),
+     Description("Analyze a SQL query's execution plan using EXPLAIN. Helps identify slow queries, missing indexes, and performance bottlenecks.")]
+    public async Task<string> DbExplainQuery(
+        [Description("Connection alias")] string alias,
+        [Description("SQL SELECT query to analyze (do NOT include EXPLAIN prefix, tool adds it automatically)")] string sql,
+        [Description("Maximum rows of plan output. Default 200.")] int maxRows = 200,
+        CancellationToken ct = default)
+    {
+        var adapter = _cm.GetAdapter(alias);
+        if (adapter is null)
+            return $"Error: Connection '{alias}' not found.";
+
+        var trimmed = sql.Trim();
+        if (!trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) &&
+            !trimmed.StartsWith("WITH", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Error: Only SELECT/WITH queries can be explained. For DML execution, use db_execute_command.";
+        }
+
+        try
+        {
+            var result = await adapter.ExplainAsync(sql, maxRows, ct);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return $"EXPLAIN error: {ex.Message}";
+        }
+    }
+
+    // ================================================================
+    // Phase 5.3: 导出数据
+    // ================================================================
+
+    [McpServerTool(Name = "db_export_data"),
+     Description("Export query results to a JSON or CSV file. Useful for data analysis, sharing, or backup.")]
+    public async Task<string> DbExportData(
+        [Description("Connection alias")] string alias,
+        [Description("SQL SELECT query to export")] string sql,
+        [Description("Output file path (e.g., 'export.json' or '/tmp/data.csv')")] string filePath,
+        [Description("Export format: 'json' or 'csv'")] string format = "json",
+        [Description("Maximum rows to export. Default 10000.")] int maxRows = 10000,
+        CancellationToken ct = default)
+    {
+        var adapter = _cm.GetAdapter(alias);
+        if (adapter is null)
+            return $"Error: Connection '{alias}' not found.";
+
+        var trimmed = sql.Trim();
+        if (!trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) &&
+            !trimmed.StartsWith("WITH", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Error: Only SELECT/WITH queries can be exported.";
+        }
+
+        format = format.ToLowerInvariant();
+        if (format is not "json" and not "csv")
+            return "Error: format must be 'json' or 'csv'.";
+
+        try
+        {
+            var result = await adapter.QueryAsync(sql, maxRows, ct);
+
+            if (result.Rows.Count == 0)
+                return "Query returned no rows. Nothing to export.";
+
+            var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
+            if (dir is not null && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
+            if (format == "json")
+            {
+                var json = JsonSerializer.Serialize(result.Rows, JsonOptions);
+                await File.WriteAllTextAsync(filePath, json, ct);
+            }
+            else // csv
+            {
+                await using var writer = new StreamWriter(filePath);
+                // Header
+                var columns = ((Dictionary<string, object?>)result.Rows[0]).Keys.ToList();
+                await writer.WriteLineAsync(string.Join(",", columns.Select(EscapeCsv)));
+
+                // Data rows
+                foreach (var row in result.Rows)
+                {
+                    var dict = (Dictionary<string, object?>)row;
+                    var values = columns.Select(c =>
+                        dict.TryGetValue(c, out var v) ? EscapeCsv(v?.ToString() ?? "") : "");
+                    await writer.WriteLineAsync(string.Join(",", values));
+                }
+            }
+
+            var truncatedMsg = result.Truncated ? $" (truncated from {result.RowCount}+ rows)" : "";
+            return $"Exported {result.RowCount} rows{truncatedMsg} to {Path.GetFullPath(filePath)} in {format} format. Elapsed: {result.Elapsed.TotalSeconds:F2}s";
+        }
+        catch (Exception ex)
+        {
+            return $"Export error: {ex.Message}";
+        }
+    }
+
+    /// <summary>CSV 转义：含逗号/引号/换行的值用双引号包裹</summary>
+    private static string EscapeCsv(string value)
+    {
+        if (value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+            return $"\"{value.Replace("\"", "\"\"")}\"";
+        return value;
+    }
+
+    // ================================================================
+    // Phase 5.4: 自动发现表关系
+    // ================================================================
+
+    [McpServerTool(Name = "db_find_relations"),
+     Description("Discover all foreign key relationships between tables in the database. Returns a map of table → referenced tables. Useful for understanding the database schema and generating ER diagrams.")]
+    public async Task<string> DbFindRelations(
+        [Description("Connection alias")] string alias,
+        CancellationToken ct = default)
+    {
+        var adapter = _cm.GetAdapter(alias);
+        if (adapter is null)
+            return $"Error: Connection '{alias}' not found.";
+
+        try
+        {
+            var tables = await adapter.ListTablesAsync(ct);
+            if (tables.Count == 0)
+                return "No tables found in the database.";
+
+            var allRelations = new List<object>();
+
+            foreach (var table in tables)
+            {
+                try
+                {
+                    var schema = await adapter.DescribeTableAsync(table.Name, ct);
+                    if (schema.ForeignKeys.Count > 0)
+                    {
+                        foreach (var fk in schema.ForeignKeys)
+                        {
+                            allRelations.Add(new
+                            {
+                                fromTable = schema.TableName,
+                                fromColumn = fk.ColumnName,
+                                toTable = fk.ReferencedTable,
+                                toColumn = fk.ReferencedColumn,
+                                constraintName = fk.Name
+                            });
+                        }
+                    }
+                }
+                catch
+                {
+                    // Skip tables that can't be described (e.g., system tables)
+                }
+            }
+
+            if (allRelations.Count == 0)
+                return "No foreign key relationships found in the database.";
+
+            // Build readable summary
+            var grouped = allRelations
+                .GroupBy(r => ((dynamic)r).fromTable)
+                .OrderBy(g => g.Key);
+
+            var lines = new List<string>
+            {
+                $"Foreign Key Relationships ({allRelations.Count} total):",
+                new string('-', 70),
+            };
+
+            foreach (var group in grouped)
+            {
+                lines.Add($"📦 {group.Key}:");
+                foreach (dynamic rel in group)
+                {
+                    lines.Add($"    {rel.fromColumn} → {rel.toTable}.{rel.toColumn}");
+                }
+            }
+
+            lines.Add(new string('-', 70));
+
+            // Also return JSON for programmatic use
+            lines.Add("\nJSON (machine-readable):");
+            lines.Add(JsonSerializer.Serialize(allRelations, JsonOptions));
+
+            return string.Join("\n", lines);
+        }
+        catch (Exception ex)
+        {
+            return $"Error finding relations: {ex.Message}";
+        }
+    }
 }

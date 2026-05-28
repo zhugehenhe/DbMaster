@@ -23,6 +23,9 @@ public sealed class MySqlAdapter : BaseDbAdapter
     public override string DbType => "mysql";
     protected override DbConnection CreateConnection() => new MySqlConnection(ConnectionString);
 
+    /// <summary>MySQL 8.0+ 使用 EXPLAIN FORMAT=JSON 获取结构化执行计划</summary>
+    protected override string ExplainPrefix(string sql) => $"EXPLAIN FORMAT=JSON {sql}";
+
     protected override async Task<List<TableInfo>> QueryTablesAsync(DbConnection conn, CancellationToken ct)
     {
         var tables = new List<TableInfo>();

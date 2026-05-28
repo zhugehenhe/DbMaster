@@ -21,6 +21,9 @@ public sealed class PostgreSqlAdapter : BaseDbAdapter
     public override string DbType => "postgresql";
     protected override DbConnection CreateConnection() => new NpgsqlConnection(ConnectionString);
 
+    /// <summary>PostgreSQL EXPLAIN ANALYZE 含详细执行统计</summary>
+    protected override string ExplainPrefix(string sql) => $"EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON) {sql}";
+
     /// <summary>去掉 PostgreSQL 双引号，information_schema 存的是裸表名</summary>
     private static string UnquoteTable(string name) =>
         name.StartsWith('"') && name.EndsWith('"') ? name[1..^1] : name;

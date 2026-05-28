@@ -630,5 +630,44 @@ flowchart LR
 
 ### 已知限制（非阻塞）
 
-- Tier2/Tier3 进阶工具待实现
 - MySQL/PG/SQL Server 适配器需 Docker 环境做集成测试
+- 部分 Tier2/Tier3 工具待实现（参见下方 Phase 5-7）
+
+---
+
+## 🔮 Phase 5-7: 功能优化 & 新工具路线图（2026-05-28）
+
+### Phase 5 — 性能优化 + 进阶查询（优先，~3h）
+
+| # | 任务 | 产出物 | 说明 |
+|---|------|--------|------|
+| 5.1 | **连接池优化** | 适配器持有一个 `Lazy<DbConnection>` 复用 | 远程 DB 延迟降 80%，消除每次查询重建连接 |
+| 5.2 | **`db_explain_query`** | EXPLAIN ANALYZE 执行计划 | AI 分析慢查询："这个 SQL 哪里慢了？" |
+| 5.3 | **`db_export_data`** | 导出查询结果 CSV/JSON 文件 | "把订单数据导出给我分析" |
+| 5.4 | **`db_find_relations`** | 自动发现所有表间外键关系 | "这个库的表之间是什么关系？" |
+
+### Phase 6 — 高级管理（~2h）
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 6.1 | `db_generate_erd` | 生成 Mermaid ER 图 |
+| 6.2 | `db_compare_schemas` | 对比两个表/库的 schema 差异 |
+| 6.3 | `db_backup` | 备份数据库到文件 |
+
+### Phase 7 — 体验增强（~2h）
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 7.1 | SSH 密钥认证 | `sshPrivateKey` 参数支持 |
+| 7.2 | 表元数据缓存 | `list_tables` 结果缓存 30s |
+| 7.3 | 查询超时参数 | `db_execute_query` 增加 `timeoutSeconds` |
+| 7.4 | 连接串管理 | 保存常用连接为配置，别名快捷连接 |
+
+### 优化细节
+
+| 优化 | 当前 | 改进 |
+|------|------|------|
+| 连接池 | 每次查询 `new DbConnection()` + `OpenAsync()` | 首次懒加载，后续复用，`Dispose` 时关闭 |
+| 查询超时 | 固定 30s | `db_execute_query` 可选 `timeoutSeconds` 参数 |
+| SSH 认证 | 仅密码 | 支持 `sshPrivateKey`（PEM 文件路径或内容） |
+| 元数据缓存 | 每次 COUNT | 简单缓存 `ConcurrentDictionary<alias, (tables, timestamp)>` |

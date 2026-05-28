@@ -23,4 +23,7 @@ public interface IDbAdapter : IDisposable
 
     /// <summary>获取单表的完整结构信息</summary>
     Task<TableSchema> DescribeTableAsync(string tableName, CancellationToken ct = default);
+
+    /// <summary>执行 EXPLAIN 查询，返回执行计划（Phase 5.2）</summary>
+    Task<QueryResult> ExplainAsync(string sql, int maxRows, CancellationToken ct = default);
 }

@@ -108,6 +108,7 @@ public class AdapterFactoryTests
         public Task<int> ExecuteAsync(string sql, CancellationToken ct = default) => Task.FromResult(0);
         public Task<IReadOnlyList<TableInfo>> ListTablesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<TableInfo>>([]);
         public Task<TableSchema> DescribeTableAsync(string tableName, CancellationToken ct = default) => Task.FromResult(new TableSchema());
+        public Task<QueryResult> ExplainAsync(string sql, int maxRows, CancellationToken ct = default) => Task.FromResult(new QueryResult());
         public void Dispose() { }
     }
 }

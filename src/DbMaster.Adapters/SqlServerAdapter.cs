@@ -23,6 +23,10 @@ public sealed class SqlServerAdapter : BaseDbAdapter
     public override string DbType => "sqlserver";
     protected override DbConnection CreateConnection() => new SqlConnection(ConnectionString);
 
+    /// <summary>SQL Server 使用 SET STATISTICS PROFILE ON 获取执行计划</summary>
+    protected override string ExplainPrefix(string sql) =>
+        $"SET STATISTICS PROFILE ON;\n{sql};\nSET STATISTICS PROFILE OFF;";
+
     protected override async Task<List<TableInfo>> QueryTablesAsync(DbConnection conn, CancellationToken ct)
     {
         var tables = new List<TableInfo>();

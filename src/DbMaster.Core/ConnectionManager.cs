@@ -74,6 +74,7 @@ public sealed class ConnectionManager : IDisposable
         public Task<int> ExecuteAsync(string s, CancellationToken ct) => throw new InvalidOperationException();
         public Task<IReadOnlyList<TableInfo>> ListTablesAsync(CancellationToken ct) => throw new InvalidOperationException();
         public Task<TableSchema> DescribeTableAsync(string t, CancellationToken ct) => throw new InvalidOperationException();
+        public Task<QueryResult> ExplainAsync(string s, int m, CancellationToken ct) => throw new InvalidOperationException();
         public void Dispose() { }
     }
 

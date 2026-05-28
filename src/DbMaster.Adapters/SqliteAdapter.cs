@@ -22,6 +22,9 @@ public sealed class SqliteAdapter : BaseDbAdapter
     public override string DbType => "sqlite";
     protected override DbConnection CreateConnection() => new SqliteConnection(ConnectionString);
 
+    /// <summary>SQLite 使用 EXPLAIN QUERY PLAN 获取执行计划</summary>
+    protected override string ExplainPrefix(string sql) => $"EXPLAIN QUERY PLAN {sql}";
+
     protected override async Task<List<TableInfo>> QueryTablesAsync(DbConnection conn, CancellationToken ct)
     {
         var tables = new List<TableInfo>();
