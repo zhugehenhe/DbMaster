@@ -102,4 +102,79 @@ public sealed class PostgreSqlAdapter : BaseDbAdapter
             indexes.Add(new IndexInfo { Name = r.GetString(0), Columns = new List<string>(), IsUnique = r.GetString(1).Contains("UNIQUE") });
         return indexes;
     }
+
+    /// <summary>Phase 6.3: 从系统目录生成 CREATE TABLE DDL</summary>
+    protected override async Task<string?> QueryCreateSqlAsync(DbConnection conn, string tableName, CancellationToken ct)
+    {
+        var unquoted = UnquoteTable(tableName);
+
+        // Get full column definitions from pg_catalog
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT a.attname,
+                   pg_catalog.format_type(a.atttypid, a.atttypmod),
+                   a.attnotnull,
+                   pg_catalog.pg_get_expr(d.adbin, d.adrelid) AS default_value,
+                   a.attnum
+            FROM pg_catalog.pg_attribute a
+            LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+            WHERE a.attrelid = (SELECT c.oid FROM pg_catalog.pg_class c
+                                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                                WHERE c.relname = @table
+                                  AND n.nspname NOT IN ('pg_catalog', 'information_schema'))
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+            ORDER BY a.attnum
+            """;
+        cmd.Parameters.Add(new NpgsqlParameter("@table", unquoted));
+
+        var colDefs = new List<(string name, string type, bool notNull, string? defaultVal)>();
+        using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct))
+            {
+                colDefs.Add((
+                    r.GetString(0),
+                    r.GetString(1),
+                    r.GetBoolean(2),
+                    r.IsDBNull(3) ? null : r.GetString(3)
+                ));
+            }
+        }
+
+        if (colDefs.Count == 0) return null;
+
+        // Get PK columns
+        var pkCols = await QueryPrimaryKeysAsync(conn, tableName, ct);
+
+        // Get FK constraints
+        var fks = await QueryForeignKeysAsync(conn, tableName, ct);
+
+        // Build DDL
+        var lines = new List<string> { $"CREATE TABLE \"{tableName}\" (" };
+
+        foreach (var (name, type, notNull, defaultVal) in colDefs)
+        {
+            var parts = new List<string> { $"    \"{name}\" {type}" };
+            if (notNull) parts.Add("NOT NULL");
+            if (defaultVal is not null) parts.Add($"DEFAULT {defaultVal}");
+            lines.Add(string.Join(" ", parts) + ",");
+        }
+
+        // Primary key
+        if (pkCols.Count > 0)
+            lines.Add($"    CONSTRAINT \"{tableName}_pkey\" PRIMARY KEY ({string.Join(", ", pkCols.Select(c => $"\"{c}\""))}),");
+
+        // Foreign keys
+        foreach (var fk in fks)
+        {
+            lines.Add($"    CONSTRAINT \"fk_{tableName}_{fk.ColumnName}\" FOREIGN KEY (\"{fk.ColumnName}\") REFERENCES \"{fk.ReferencedTable}\" (\"{fk.ReferencedColumn}\"),");
+        }
+
+        // Remove trailing comma from last line
+        lines[^1] = lines[^1].TrimEnd(',');
+
+        lines.Add(");");
+        return string.Join("\n", lines);
+    }
 }
