@@ -71,11 +71,28 @@ public sealed class SqlServerAdapter : BaseDbAdapter
     {
         var fks = new List<ForeignKeyInfo>();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COLUMN_NAME = kcu.COLUMN_NAME, REFERENCED_TABLE = ccu.TABLE_NAME, REFERENCED_COLUMN = ccu.COLUMN_NAME FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME JOIN information_schema.constraint_column_usage ccu ON ccu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME WHERE tc.CONSTRAINT_TYPE = 'FOREIGN KEY' AND tc.TABLE_NAME = @table";
+        cmd.CommandText = """
+            SELECT 
+                kcu.COLUMN_NAME,
+                ccu.TABLE_NAME AS REFERENCED_TABLE,
+                ccu.COLUMN_NAME AS REFERENCED_COLUMN
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu 
+                ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+            JOIN information_schema.constraint_column_usage ccu 
+                ON ccu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+            WHERE tc.CONSTRAINT_TYPE = 'FOREIGN KEY' 
+              AND tc.TABLE_NAME = @table
+            """;
         cmd.Parameters.Add(new SqlParameter("@table", table));
         using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
-            fks.Add(new ForeignKeyInfo { Name = r.GetString(0), ColumnName = r.GetString(0), ReferencedTable = r.GetString(1), ReferencedColumn = r.GetString(2) });
+            fks.Add(new ForeignKeyInfo
+            {
+                ColumnName = r.GetString(0),
+                ReferencedTable = r.GetString(1),
+                ReferencedColumn = r.GetString(2),
+            });
         return fks;
     }
 
