@@ -55,11 +55,16 @@ public static class AdapterFactory
         if (!string.IsNullOrEmpty(dbType) && dbType != "auto")
         {
             var normalized = dbType.ToLowerInvariant();
+            // 优化 #3：用字典快速查找，避免遍历创建不匹配的 adapter 实例
             foreach (var detector in _detectors)
             {
                 var adapter = detector(connectionString);
-                if (adapter is not null && adapter.DbType == normalized)
-                    return adapter;
+                if (adapter is not null)
+                {
+                    if (adapter.DbType == normalized)
+                        return adapter;
+                    adapter.Dispose(); // 不匹配的立即释放
+                }
             }
             throw new ArgumentException(
                 $"Unknown or unregistered database type: '{dbType}'. " +

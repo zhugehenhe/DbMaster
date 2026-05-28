@@ -26,21 +26,55 @@ public sealed class ConnectionManager : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(alias);
 
-        if (_connections.Count >= MaxConnections && !_connections.ContainsKey(alias))
+        // 修复 #1：先原子操作抢占槽位，再建连接
+        var sentinel = new ConnectionEntry(new PendingAdapter(), DateTime.UtcNow);
+        var existing = _connections.GetOrAdd(alias, sentinel);
+
+        if (existing != sentinel)
+        {
+            // 别名已存在 → 需要替换。先检查上限（替换不占新槽位）
+            if (_connections.Count > MaxConnections)
+            {
+                _connections.TryRemove(alias, out _);
+                throw new InvalidOperationException(
+                    $"Connection limit reached ({MaxConnections}). Disconnect unused aliases first.");
+            }
+            // 不检查上限，因为替换不增加连接数
+        }
+        else if (_connections.Count > MaxConnections)
+        {
+            _connections.TryRemove(alias, out _);
             throw new InvalidOperationException(
                 $"Connection limit reached ({MaxConnections}). Disconnect unused aliases first.");
-
-        var adapter = AdapterFactory.Create(connectionString, dbType);
-        await adapter.TestConnectionAsync(ct);
-
-        // 如果别名已存在，先释放旧连接（修复 #2：资源泄漏）
-        if (_connections.TryGetValue(alias, out var oldEntry))
-        {
-            oldEntry.Adapter.Dispose();
         }
 
-        _connections[alias] = new ConnectionEntry(adapter, DateTime.UtcNow);
-        return adapter.DbType;
+        try
+        {
+            var adapter = AdapterFactory.Create(connectionString, dbType);
+            await adapter.TestConnectionAsync(ct);
+
+            // 替换 sentinel 为真实 adapter
+            _connections[alias] = new ConnectionEntry(adapter, DateTime.UtcNow);
+            return adapter.DbType;
+        }
+        catch
+        {
+            // 连接失败，清理占位
+            _connections.TryRemove(alias, out _);
+            throw;
+        }
+    }
+
+    /// <summary>Pending adapter — 占位用，不可调用任何方法</summary>
+    private sealed class PendingAdapter : IDbAdapter
+    {
+        public string DbType => "pending";
+        public Task<bool> TestConnectionAsync(CancellationToken ct) => Task.FromResult(false);
+        public Task<QueryResult> QueryAsync(string s, int m, CancellationToken ct) => throw new InvalidOperationException();
+        public Task<int> ExecuteAsync(string s, CancellationToken ct) => throw new InvalidOperationException();
+        public Task<IReadOnlyList<TableInfo>> ListTablesAsync(CancellationToken ct) => throw new InvalidOperationException();
+        public Task<TableSchema> DescribeTableAsync(string t, CancellationToken ct) => throw new InvalidOperationException();
+        public void Dispose() { }
     }
 
     /// <summary>断开并释放指定连接</summary>

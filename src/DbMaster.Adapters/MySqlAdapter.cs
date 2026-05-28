@@ -77,9 +77,10 @@ public sealed class MySqlAdapter : BaseDbAdapter
 
     protected override async Task<List<IndexInfo>> QueryIndexesAsync(DbConnection conn, string table, CancellationToken ct)
     {
+        ValidateTableName(table);
         var indexes = new List<IndexInfo>();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SHOW INDEX FROM `" + table.Replace("`", "``") + "`";
+        cmd.CommandText = "SHOW INDEX FROM `" + table + "`";
         using var r = await cmd.ExecuteReaderAsync(ct);
         var idxMap = new Dictionary<string, List<string>>();
         while (await r.ReadAsync(ct))

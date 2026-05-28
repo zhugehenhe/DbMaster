@@ -17,6 +17,9 @@ public abstract class BaseDbAdapter : IDbAdapter
         ConnectionString = connectionString;
     }
 
+    /// <summary>修复 #4：ToString 不暴露连接字符串中的密码</summary>
+    public override string ToString() => $"{DbType} adapter (connected)";
+
     public abstract string DbType { get; }
 
     /// <summary>子类实现：创建数据库连接</summary>
@@ -40,6 +43,18 @@ public abstract class BaseDbAdapter : IDbAdapter
     /// <summary>子类实现：获取建表SQL（可选）</summary>
     protected virtual Task<string?> QueryCreateSqlAsync(DbConnection conn, string tableName, CancellationToken ct)
         => Task.FromResult<string?>(null);
+
+    /// <summary>验证表名仅包含安全字符</summary>
+    protected static void ValidateTableName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 128)
+            throw new ArgumentException("Invalid table name.");
+
+        // 修复 #2：仅允许 alphanumeric + underscore + hyphen
+        if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z0-9_\-]+$"))
+            throw new ArgumentException(
+                "Table name contains invalid characters. Only letters, numbers, underscores, and hyphens allowed.");
+    }
 
     public async Task<bool> TestConnectionAsync(CancellationToken ct = default)
     {
