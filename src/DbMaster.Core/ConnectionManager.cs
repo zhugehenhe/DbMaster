@@ -18,10 +18,13 @@ public sealed class ConnectionManager : IDisposable
 
     /// <summary>
     /// 建立新连接（或替换已有别名）。
+    /// 若别名已存在，先释放旧连接再建立新连接。
     /// </summary>
     /// <returns>检测到的数据库类型</returns>
     public async Task<string> ConnectAsync(string alias, string connectionString, CancellationToken ct = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(alias);
+
         if (_connections.Count >= MaxConnections && !_connections.ContainsKey(alias))
             throw new InvalidOperationException(
                 $"Connection limit reached ({MaxConnections}). Disconnect unused aliases first.");
@@ -29,7 +32,13 @@ public sealed class ConnectionManager : IDisposable
         var adapter = AdapterFactory.Create(connectionString);
         await adapter.TestConnectionAsync(ct);
 
-        _connections[alias] = new ConnectionEntry(adapter, connectionString, DateTime.UtcNow);
+        // 如果别名已存在，先释放旧连接（修复 #2：资源泄漏）
+        if (_connections.TryGetValue(alias, out var oldEntry))
+        {
+            oldEntry.Adapter.Dispose();
+        }
+
+        _connections[alias] = new ConnectionEntry(adapter, DateTime.UtcNow);
         return adapter.DbType;
     }
 
@@ -53,9 +62,13 @@ public sealed class ConnectionManager : IDisposable
         if (!_connections.TryGetValue(alias, out var entry))
             return null;
 
+        // 修复 #3：超时时直接 TryRemove + Dispose，避免竞态
         if (DateTime.UtcNow - entry.LastAccess > IdleTimeout)
         {
-            Disconnect(alias);
+            if (_connections.TryRemove(alias, out entry))
+            {
+                entry.Adapter.Dispose();
+            }
             return null;
         }
 
@@ -80,10 +93,9 @@ public sealed class ConnectionManager : IDisposable
         _connections.Clear();
     }
 
-    private sealed class ConnectionEntry(IDbAdapter adapter, string connStr, DateTime connectedAt)
+    private sealed class ConnectionEntry(IDbAdapter adapter, DateTime connectedAt)
     {
         public IDbAdapter Adapter { get; } = adapter;
-        public string ConnectionString { get; } = connStr;
         public DateTime ConnectedAt { get; } = connectedAt;
         public DateTime LastAccess { get; set; } = connectedAt;
     }

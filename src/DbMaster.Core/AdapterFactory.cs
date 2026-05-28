@@ -3,76 +3,76 @@ using System.Data.Common;
 namespace DbMaster.Core;
 
 /// <summary>
-/// 适配器工厂 — 根据连接字符串自动识别数据库类型并创建对应的 IDbAdapter。
+/// 适配器工厂 — 通过委托注册模式解耦 Core 和 Adapters 项目。
+/// 各适配器项目在初始化时调用 <see cref="Register"/> 注册检测器，
+/// 无需反射即可动态创建适配器。
 /// </summary>
 public static class AdapterFactory
 {
+    private static readonly List<AdapterDetector> _detectors = [];
+
     /// <summary>
-    /// 解析连接字符串并创建适配器。
-    /// 启发式规则：检查关键字顺序为 SQLite → SQL Server → PostgreSQL → MySQL
+    /// 适配器检测器委托：接受连接字符串，返回适配器实例或 null（表示不匹配）。
     /// </summary>
+    public delegate IDbAdapter? AdapterDetector(string connectionString);
+
+    /// <summary>
+    /// 注册一个适配器检测器。通常在 Adapters 项目的静态构造函数中调用。
+    /// </summary>
+    public static void Register(AdapterDetector detector)
+    {
+        ArgumentNullException.ThrowIfNull(detector);
+        _detectors.Add(detector);
+    }
+
+    /// <summary>
+    /// 解析连接字符串并创建匹配的 IDbAdapter。
+    /// 按注册顺序依次尝试检测器，返回第一个匹配的适配器。
+    /// </summary>
+    /// <exception cref="InvalidOperationException">无法识别的数据库类型</exception>
     public static IDbAdapter Create(string connectionString)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        // 使用 DbConnectionStringBuilder 解析（不验证，仅提取键值）
-        var cs = new DbConnectionStringBuilder();
-        try { cs.ConnectionString = connectionString; } catch { }
-
-        // 检测关键字判断数据库类型
-        if (HasKeyword(cs, "Data Source") && !HasKeyword(cs, "Server") && !HasKeyword(cs, "Host"))
+        // 基础验证：连接串至少包含一个键值对
+        try
         {
-            // SQLite: Data Source=xxx.db（只有 Data Source，没有 Server/Host）
-            return CreateSqliteAdapter(connectionString);
+            var test = new DbConnectionStringBuilder { ConnectionString = connectionString };
+            if (test.Keys.Count == 0)
+                throw new ArgumentException("Connection string contains no key-value pairs.");
+        }
+        catch (ArgumentException)
+        {
+            throw; // 格式错误，直接向上抛出
         }
 
-        if (HasKeyword(cs, "TrustServerCertificate") || HasKeyword(cs, "Integrated Security"))
+        // 依次尝试已注册的检测器
+        foreach (var detector in _detectors)
         {
-            // SQL Server 特征
-            return CreateSqlServerAdapter(connectionString);
+            var adapter = detector(connectionString);
+            if (adapter is not null)
+                return adapter;
         }
 
-        if (HasKeyword(cs, "Host"))
+        throw new InvalidOperationException(
+            "Unable to detect database type from connection string. " +
+            "Supported types: SQLite, MySQL, PostgreSQL, SQL Server. " +
+            "Ensure the appropriate adapter package is installed and registered.");
+    }
+
+    /// <summary>
+    /// 辅助方法：检查连接串中是否包含指定关键字。
+    /// </summary>
+    public static bool HasKeyword(string connectionString, string key)
+    {
+        try
         {
-            // PostgreSQL: Host=xxx
-            return CreatePostgreSqlAdapter(connectionString);
+            var cs = new DbConnectionStringBuilder { ConnectionString = connectionString };
+            return cs.Keys.Cast<string>().Any(k => k.Equals(key, StringComparison.OrdinalIgnoreCase));
         }
-
-        // 默认 MySQL
-        return CreateMySqlAdapter(connectionString);
-    }
-
-    private static bool HasKeyword(DbConnectionStringBuilder cs, string key)
-        => cs.Keys.Cast<string>().Any(k => k.Equals(key, StringComparison.OrdinalIgnoreCase));
-
-    // 工厂方法 — 使用反射创建适配器避免 DbMaster.Core 依赖 DbMaster.Adapters
-    // 实际实现放在 Adapters 项目中
-
-    private static IDbAdapter CreateSqliteAdapter(string cs)
-    {
-        var type = Type.GetType("DbMaster.Adapters.SqliteAdapter, DbMaster.Adapters")
-            ?? throw new InvalidOperationException("SQLite adapter not found. Ensure DbMaster.Adapters is referenced.");
-        return (IDbAdapter)Activator.CreateInstance(type, cs)!;
-    }
-
-    private static IDbAdapter CreateMySqlAdapter(string cs)
-    {
-        var type = Type.GetType("DbMaster.Adapters.MySqlAdapter, DbMaster.Adapters")
-            ?? throw new InvalidOperationException("MySQL adapter not found.");
-        return (IDbAdapter)Activator.CreateInstance(type, cs)!;
-    }
-
-    private static IDbAdapter CreatePostgreSqlAdapter(string cs)
-    {
-        var type = Type.GetType("DbMaster.Adapters.PostgreSqlAdapter, DbMaster.Adapters")
-            ?? throw new InvalidOperationException("PostgreSQL adapter not found.");
-        return (IDbAdapter)Activator.CreateInstance(type, cs)!;
-    }
-
-    private static IDbAdapter CreateSqlServerAdapter(string cs)
-    {
-        var type = Type.GetType("DbMaster.Adapters.SqlServerAdapter, DbMaster.Adapters")
-            ?? throw new InvalidOperationException("SQL Server adapter not found.");
-        return (IDbAdapter)Activator.CreateInstance(type, cs)!;
+        catch
+        {
+            return false;
+        }
     }
 }
