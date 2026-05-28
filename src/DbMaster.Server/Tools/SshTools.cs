@@ -19,7 +19,7 @@ public sealed class SshTools
     }
 
     [McpServerTool(Name = "db_ssh_tunnel"),
-     Description("Create an SSH tunnel to a remote server. Supports password or private key authentication. Use the returned local port with db_connect to access databases without public ports.")]
+     Description("【SSH隧道】建立 SSH 端口转发 → 通过跳板机访问无公网 IP 的数据库，支持密码和密钥认证")]
     public async Task<string> DbSshTunnel(
         [Description("SSH server hostname or IP")] string sshHost,
         [Description("SSH username")] string sshUser,
@@ -53,7 +53,7 @@ public sealed class SshTools
     }
 
     [McpServerTool(Name = "db_ssh_disconnect"),
-     Description("Close an SSH tunnel by its local port number.")]
+     Description("【关闭隧道】关闭指定本地端口的 SSH 隧道")]
     public string DbSshDisconnect(
         [Description("Local port number of the tunnel to close")] int localPort)
     {
@@ -63,7 +63,7 @@ public sealed class SshTools
     }
 
     [McpServerTool(Name = "db_ssh_list"),
-     Description("List all active SSH tunnels.")]
+     Description("【隧道列表】列出所有活动的 SSH 隧道")]
     public string DbSshList()
     {
         var tunnels = _tunnel.ListTunnels();

@@ -31,27 +31,45 @@ public sealed class DatabaseTools
     // ================================================================
 
     [McpServerTool(Name = "db_list_supported_types"),
-     Description("Lists all supported database types with connection string examples. Call this first to see available options.")]
+     Description("【工具目录】查看所有支持的数据库类型和全部可用工具。第一步调用此工具了解能做什么。")]
     public static string DbListSupportedTypes()
     {
         return """
-            Supported database types (use with db_connect's dbType parameter):
-            
-            sqlite     — SQLite (file-based, zero config)
-                        Example: Data Source=:memory:  or  Data Source=path/to/db.sqlite
-            
-            mysql      — MySQL / MariaDB
-                        Example: Server=host;Port=3306;Database=db;User=root;Password=xxx;Pooling=true;MinPoolSize=1
-            
-            postgresql — PostgreSQL
-                        Example: Host=host;Port=5432;Database=db;Username=postgres;Password=xxx;Pooling=true;MinPoolSize=1
-            
-            sqlserver  — SQL Server
-                        Example: Server=host;Database=db;User Id=sa;Password=xxx;TrustServerCertificate=True;Pooling=true;MinPoolSize=1
-            
-            auto       — Auto-detect from connection string keywords (default)
-            
-            💡 Tip: Add 'Pooling=true;MinPoolSize=1' for remote databases to reuse TCP connections.
+            📋 DbMaster 工具目录 — 支持 SQLite / MySQL / PostgreSQL / SQL Server
+
+            🔌 连接管理:
+              db_connect          连接数据库（支持 auto 自动检测类型）
+              db_disconnect       断开连接
+              db_list_connections 查看所有活动连接
+
+            📊 数据查询:
+              db_execute_query    执行 SELECT 查询 → 返回 JSON
+              db_explain_query    分析 SQL 执行计划 → 查慢查询原因
+              db_table_stats      统计所有表的行数
+
+            🔍 表结构探索:
+              db_list_tables      列出数据库中所有表
+              db_describe_table   查看表结构（列、类型、主键、外键、索引、建表SQL）
+              db_find_relations   发现所有表之间的外键关系
+
+            📦 导出与备份:
+              db_export_data      将查询结果导出为 JSON/CSV 文件
+              db_export_schema    导出所有表的建表 DDL 为 .sql 文件
+              db_backup           全库备份（DDL + INSERT 数据）为 .sql 文件
+
+            🔧 高级工具:
+              db_generate_erd     生成 Mermaid ER 图 → 可视化数据库结构
+              db_compare_schemas  对比两个表的 schema 差异 → 迁移验证
+              db_save_profile     保存连接配置到文件
+              db_load_profile     加载已保存的连接配置
+
+            🔐 SSH 隧道（远程数据库）:
+              db_ssh_tunnel       建立 SSH 端口转发隧道 → 访问无公网IP的数据库
+              db_ssh_disconnect   关闭指定隧道
+              db_ssh_list         列出所有活动隧道
+
+            💡 典型工作流:
+              db_list_supported_types → db_connect → db_list_tables → db_describe_table → db_execute_query
             """;
     }
 
@@ -60,7 +78,7 @@ public sealed class DatabaseTools
     // ================================================================
 
     [McpServerTool(Name = "db_connect"),
-     Description("Connect to a database and assign an alias. Use db_list_supported_types first to see options.")]
+     Description("【连接数据库】建立数据库连接并设置别名 → 先调用 db_list_supported_types 查看类型")]
     public async Task<string> DbConnect(
         [Description("Database connection string")] string connectionString,
         [Description("Short alias for this connection, e.g. 'prod' or 'dev'")] string alias,
@@ -79,7 +97,7 @@ public sealed class DatabaseTools
         }
     }
 
-    [McpServerTool(Name = "db_disconnect"), Description("Disconnect from a database by alias.")]
+    [McpServerTool(Name = "db_disconnect"), Description("【断开连接】断开指定别名的数据库连接")]
     public string DbDisconnect(
         [Description("Connection alias to disconnect")] string alias)
     {
@@ -88,7 +106,7 @@ public sealed class DatabaseTools
             : $"Alias '{alias}' not found.";
     }
 
-    [McpServerTool(Name = "db_list_connections"), Description("List all active database connections.")]
+    [McpServerTool(Name = "db_list_connections"), Description("【查看连接】列出所有活动连接及其状态")]
     public string DbListConnections()
     {
         var connections = _cm.ListConnections();
@@ -104,7 +122,7 @@ public sealed class DatabaseTools
     // ================================================================
 
     [McpServerTool(Name = "db_execute_query"),
-     Description("Execute a SELECT query on a connected database. Returns results as JSON.")]
+     Description("【执行查询】执行 SELECT 查询返回 JSON → 改/删数据用 db_execute_command")]
     public async Task<string> DbExecuteQuery(
         [Description("Connection alias")] string alias,
         [Description("SQL SELECT query to execute")] string sql,
@@ -138,7 +156,7 @@ public sealed class DatabaseTools
     }
 
     [McpServerTool(Name = "db_execute_command"),
-     Description("Execute a write command (INSERT, UPDATE, DELETE, DDL). Requires confirmation.")]
+     Description("【执行写操作】INSERT/UPDATE/DELETE/DDL → 需 confirm='CONFIRM'，DROP 需额外确认")]
     public async Task<string> DbExecuteCommand(
         [Description("Connection alias")] string alias,
         [Description("SQL command to execute")] string sql,
@@ -172,7 +190,7 @@ public sealed class DatabaseTools
     // 表结构浏览
     // ================================================================
 
-    [McpServerTool(Name = "db_list_tables"), Description("List all user tables in the connected database.")]
+    [McpServerTool(Name = "db_list_tables"), Description("【列出表】查看数据库中所有用户表及行数")]
     public async Task<string> DbListTables(
         [Description("Connection alias")] string alias,
         CancellationToken ct = default)
@@ -196,7 +214,7 @@ public sealed class DatabaseTools
     }
 
     [McpServerTool(Name = "db_describe_table"),
-     Description("Get the full schema of a table: columns, types, keys, indexes, and create SQL.")]
+     Description("【查看表结构】显示列/类型/主键/外键/索引/建表SQL → 理解一张表")]
     public async Task<string> DbDescribeTable(
         [Description("Connection alias")] string alias,
         [Description("Table name to describe")] string tableName,
@@ -258,7 +276,7 @@ public sealed class DatabaseTools
     // 统计
     // ================================================================
 
-    [McpServerTool(Name = "db_table_stats"), Description("Get row counts and basic statistics for all tables.")]
+    [McpServerTool(Name = "db_table_stats"), Description("【表统计】显示所有表的行数排行和汇总")]
     public async Task<string> DbTableStats(
         [Description("Connection alias")] string alias,
         CancellationToken ct = default)
@@ -299,7 +317,7 @@ public sealed class DatabaseTools
     // ================================================================
 
     [McpServerTool(Name = "db_explain_query"),
-     Description("Analyze a SQL query's execution plan using EXPLAIN. Helps identify slow queries, missing indexes, and performance bottlenecks.")]
+     Description("【分析慢查询】用 EXPLAIN 分析 SQL 执行计划 → 查性能瓶颈/缺索引")]
     public async Task<string> DbExplainQuery(
         [Description("Connection alias")] string alias,
         [Description("SQL SELECT query to analyze (do NOT include EXPLAIN prefix, tool adds it automatically)")] string sql,
@@ -346,7 +364,7 @@ public sealed class DatabaseTools
     }
 
     [McpServerTool(Name = "db_export_data"),
-     Description("Export query results to a JSON or CSV file. Relative paths resolve to the VS Code workspace root. Useful for data analysis, sharing, or backup.")]
+     Description("【导出数据】查询结果导出为 JSON 或 CSV 文件 → 数据分析/分享")]
     public async Task<string> DbExportData(
         [Description("Connection alias")] string alias,
         [Description("SQL SELECT query to export")] string sql,
@@ -429,7 +447,7 @@ public sealed class DatabaseTools
     // ================================================================
 
     [McpServerTool(Name = "db_find_relations"),
-     Description("Discover all foreign key relationships between tables in the database. Returns a map of table → referenced tables. Useful for understanding the database schema and generating ER diagrams.")]
+     Description("【发现关系】自动查找所有表之间的外键关联 → 理解数据模型")]
     public async Task<string> DbFindRelations(
         [Description("Connection alias")] string alias,
         CancellationToken ct = default)
@@ -514,7 +532,7 @@ public sealed class DatabaseTools
     // ================================================================
 
     [McpServerTool(Name = "db_generate_erd"),
-     Description("Generate a Mermaid ER (Entity-Relationship) diagram from the database schema. Returns Mermaid syntax that renders as a visual diagram. Useful for understanding database structure at a glance.")]
+     Description("【生成ER图】生成 Mermaid ER 图语法 → 可粘贴到 GitHub/Notion 渲染")]
     public async Task<string> DbGenerateErd(
         [Description("Connection alias")] string alias,
         [Description("Comma-separated table names to include, or leave empty for all tables")] string? tables = null,
@@ -606,7 +624,7 @@ public sealed class DatabaseTools
     // ================================================================
 
     [McpServerTool(Name = "db_compare_schemas"),
-     Description("Compare the schemas of two tables (same alias or different aliases). Reports differences in columns, types, primary keys, foreign keys, and indexes. Useful for finding discrepancies between environments.")]
+     Description("【对比Schema】比较两个表的列/类型/主键/外键/索引差异 → 迁移验证")]
     public async Task<string> DbCompareSchemas(
         [Description("Connection alias for first table")] string alias1,
         [Description("Table name in first alias")] string tableName1,
@@ -727,7 +745,7 @@ public sealed class DatabaseTools
     // ================================================================
 
     [McpServerTool(Name = "db_export_schema"),
-     Description("Export DDL (CREATE TABLE) statements for all tables to a SQL file. Safer alternative to full database backup — reconstructs the schema without data. Useful for version control, migration, or documentation.")]
+     Description("【导出DDL】导出所有表的建表语句为 .sql 文件 → 版本控制/文档")]
     public async Task<string> DbExportSchema(
         [Description("Connection alias")] string alias,
         [Description("Output file path (e.g., 'schema.sql'). Relative paths resolve to workspace root.")] string filePath,
@@ -817,7 +835,7 @@ public sealed class DatabaseTools
     // ================================================================
 
     [McpServerTool(Name = "db_backup"),
-     Description("Create a full database backup as a SQL file containing CREATE TABLE DDL and INSERT statements for each table. Relative paths resolve to the VS Code workspace root. Supports all 4 database types.")]
+     Description("【全库备份】导出 DDL + INSERT 数据为 .sql 文件 → 完整可恢复")]
     public async Task<string> DbBackup(
         [Description("Connection alias")] string alias,
         [Description("Output file path (e.g., 'backup.sql'). Relative paths resolve to workspace root.")] string filePath,
@@ -965,7 +983,7 @@ public sealed class DatabaseTools
     }
 
     [McpServerTool(Name = "db_save_profile"),
-     Description("Save a database connection profile for later reuse. Profiles are stored as a JSON file. Use db_load_profile to restore.")]
+     Description("【保存配置】保存当前连接信息到 JSON 文件 → 下次用 db_load_profile 恢复")]
     public async Task<string> DbSaveProfile(
         [Description("Connection alias (must be connected)")] string alias,
         [Description("Optional description for this connection")] string? description = null,
@@ -1018,7 +1036,7 @@ public sealed class DatabaseTools
     }
 
     [McpServerTool(Name = "db_load_profile"),
-     Description("Load saved connection profiles from a JSON file. Shows aliases, types, and descriptions for easy reconnection.")]
+     Description("【加载配置】从 JSON 文件读取已保存的连接配置列表")]
     public string DbLoadProfile(
         [Description("Profile file path. Default: 'dbmaster_profiles.json' in workspace root.")]
         string filePath = "dbmaster_profiles.json")
