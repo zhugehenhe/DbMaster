@@ -19,6 +19,7 @@ builder.Services.AddSingleton<ConnectionManager>(_ => new ConnectionManager
     MaxConnections = 10,
     IdleTimeout = TimeSpan.FromMinutes(30),
 });
+builder.Services.AddSingleton<SshTunnelManager>();
 
 builder.Services.AddMcpServer(options =>
 {
@@ -32,6 +33,7 @@ builder.Services.AddMcpServer(options =>
     options.Capabilities = new() { Tools = new() };
 })
     .WithStdioServerTransport()
-    .WithTools<DatabaseTools>();
+    .WithTools<DatabaseTools>()
+    .WithTools<SshTools>();
 
 await builder.Build().RunAsync();

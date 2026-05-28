@@ -11,6 +11,7 @@ builder.Services.AddSingleton<ConnectionManager>(_ => new ConnectionManager
     MaxConnections = 10,
     IdleTimeout = TimeSpan.FromMinutes(30),
 });
+builder.Services.AddSingleton<SshTunnelManager>();
 
 // ============================================================
 // MCP Server 配置
@@ -33,7 +34,8 @@ builder.Services.AddMcpServer(options =>
     {
         options.Stateless = false;
     })
-    .WithTools<DatabaseTools>();
+    .WithTools<DatabaseTools>()
+    .WithTools<SshTools>();
 
 var app = builder.Build();
 

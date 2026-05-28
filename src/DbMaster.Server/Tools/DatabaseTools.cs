@@ -36,15 +36,17 @@ public sealed class DatabaseTools
                         Example: Data Source=:memory:  or  Data Source=path/to/db.sqlite
             
             mysql      — MySQL / MariaDB
-                        Example: Server=host;Port=3306;Database=db;User=root;Password=xxx
+                        Example: Server=host;Port=3306;Database=db;User=root;Password=xxx;Pooling=true;MinPoolSize=1
             
             postgresql — PostgreSQL
-                        Example: Host=host;Port=5432;Database=db;Username=postgres;Password=xxx
+                        Example: Host=host;Port=5432;Database=db;Username=postgres;Password=xxx;Pooling=true;MinPoolSize=1
             
             sqlserver  — SQL Server
-                        Example: Server=host;Database=db;User Id=sa;Password=xxx;TrustServerCertificate=True
+                        Example: Server=host;Database=db;User Id=sa;Password=xxx;TrustServerCertificate=True;Pooling=true;MinPoolSize=1
             
             auto       — Auto-detect from connection string keywords (default)
+            
+            💡 Tip: Add 'Pooling=true;MinPoolSize=1' for remote databases to reuse TCP connections.
             """;
     }
 
