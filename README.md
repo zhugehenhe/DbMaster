@@ -32,9 +32,8 @@ copy publish\DbMaster.Stdio.exe $env:USERPROFILE\.dbmaster\dbmaster.exe
     "DbMaster": {
       "type": "stdio",
       "command": "dbmaster",
-      "cwd": "${workspaceFolder}",
       "env": {
-        "DBMASTER_EXPORT_DIR": "${workspaceFolder}"
+        "DBMASTER_EXPORT_DIR": "C:/"
       }
     }
   }

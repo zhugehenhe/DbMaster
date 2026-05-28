@@ -368,7 +368,7 @@ public sealed class DatabaseTools
     public async Task<string> DbExportData(
         [Description("Connection alias")] string alias,
         [Description("SQL SELECT query to export")] string sql,
-        [Description("Output file path (e.g., 'export.json' for workspace root, or absolute path like 'C:/data.csv')")] string filePath,
+        [Description("保存路径，如 C:/Users/xxx/Desktop/export.json 或 ./data.csv。AI 请直接指定你希望保存的位置")] string filePath,
         [Description("Export format: 'json' or 'csv'")] string format = "json",
         [Description("Maximum rows to export. Default 10000.")] int maxRows = 10000,
         CancellationToken ct = default)
@@ -748,7 +748,7 @@ public sealed class DatabaseTools
      Description("【导出DDL】导出所有表的建表语句为 .sql 文件 → 版本控制/文档")]
     public async Task<string> DbExportSchema(
         [Description("Connection alias")] string alias,
-        [Description("Output file path (e.g., 'schema.sql'). Relative paths resolve to workspace root.")] string filePath,
+        [Description("保存路径，如 C:/Users/xxx/Desktop/schema.sql。AI 请直接指定")] string filePath,
         [Description("Comma-separated table names, or empty for all")] string? tables = null,
         CancellationToken ct = default)
     {
@@ -838,7 +838,7 @@ public sealed class DatabaseTools
      Description("【全库备份】导出 DDL + INSERT 数据为 .sql 文件 → 完整可恢复")]
     public async Task<string> DbBackup(
         [Description("Connection alias")] string alias,
-        [Description("Output file path (e.g., 'backup.sql'). Relative paths resolve to workspace root.")] string filePath,
+        [Description("保存路径，如 C:/Users/xxx/Desktop/backup.sql。AI 请直接指定")] string filePath,
         [Description("Comma-separated table names to include, or empty for all tables")] string? tables = null,
         [Description("Maximum rows per table (0 = unlimited). Default 50000.")] int maxRowsPerTable = 50000,
         CancellationToken ct = default)
