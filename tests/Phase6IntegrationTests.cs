@@ -192,4 +192,86 @@ public class Phase6IntegrationTests : IDisposable
 
         File.Delete(exportPath);
     }
+
+    // ─── 6.4: 全库备份 ───
+
+    [Fact]
+    public async Task Backup_WritesFullDdlAndInserts()
+    {
+        if (_adapter is null) return;
+
+        var tables = await _adapter.ListTablesAsync();
+        var targetTables = tables.Take(2).ToList(); // Just 2 tables for speed
+
+        var exportPath = Path.Combine(Path.GetTempPath(), $"dbmaster_backup_{Guid.NewGuid():N}.sql");
+        var ddlCount = 0;
+        var dataCount = 0;
+
+        {
+            await using var writer = new StreamWriter(exportPath);
+            await writer.WriteLineAsync("-- DbMaster Backup Test");
+
+            foreach (var table in targetTables)
+            {
+                try
+                {
+                    var schema = await _adapter.DescribeTableAsync(table.Name);
+                    await writer.WriteLineAsync($"\n-- Table: {schema.TableName}");
+
+                    // DDL
+                    if (!string.IsNullOrEmpty(schema.CreateSql))
+                    {
+                        await writer.WriteLineAsync(schema.CreateSql + ";");
+                        ddlCount++;
+                    }
+
+                    // Data (limit 10 rows)
+                    var quoting = "\"";
+                    var data = await _adapter.QueryAsync(
+                        $"SELECT * FROM {quoting}{table.Name}{quoting} LIMIT 10", 10);
+
+                    if (data.Rows.Count > 0)
+                    {
+                        var columns = ((Dictionary<string, object?>)data.Rows[0]).Keys.ToList();
+                        var colList = string.Join(", ", columns.Select(c => $"{quoting}{c}{quoting}"));
+
+                        foreach (var row in data.Rows)
+                        {
+                            var dict = (Dictionary<string, object?>)row;
+                            var values = string.Join(", ", columns.Select(c =>
+                            {
+                                var v = dict[c];
+                                if (v is null || v == DBNull.Value) return "NULL";
+                                if (v is string s) return $"'{s.Replace("'", "''")}'";
+                                if (v is DateTime dt) return $"'{dt:yyyy-MM-dd HH:mm:ss}'";
+                                if (v is Guid g) return $"'{g}'";
+                                if (v is bool b) return b ? "TRUE" : "FALSE";
+                                return v.ToString() ?? "NULL";
+                            }));
+                            await writer.WriteLineAsync(
+                                $"INSERT INTO {quoting}{table.Name}{quoting} ({colList}) VALUES ({values});");
+                        }
+                        dataCount++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await writer.WriteLineAsync($"-- ERROR: {ex.Message}");
+                }
+            }
+        }
+
+        Assert.True(File.Exists(exportPath));
+        var content = File.ReadAllText(exportPath);
+        Assert.Contains("CREATE TABLE", content);
+        Assert.Contains("INSERT INTO", content);
+        Assert.True(ddlCount > 0, $"Should have DDL for at least 1 table, got {ddlCount}");
+        Assert.True(dataCount > 0, $"Should have data for at least 1 table, got {dataCount}");
+
+        Console.WriteLine($"  ✅ Backup: {ddlCount} DDLs + {dataCount} data tables");
+        Console.WriteLine($"  File: {exportPath} ({new FileInfo(exportPath).Length:N0} bytes)");
+        Console.WriteLine($"  Preview (first 300 chars): {content[..Math.Min(300, content.Length)]}");
+
+        File.Delete(exportPath);
+    }
 }

@@ -810,4 +810,160 @@ public sealed class DatabaseTools
             return $"Error exporting schema: {ex.Message}";
         }
     }
+
+    // ================================================================
+    // db_backup: 全库备份（DDL + INSERT 数据）
+    // ================================================================
+
+    [McpServerTool(Name = "db_backup"),
+     Description("Create a full database backup as a SQL file containing CREATE TABLE DDL and INSERT statements for each table. Relative paths resolve to the VS Code workspace root. Supports all 4 database types.")]
+    public async Task<string> DbBackup(
+        [Description("Connection alias")] string alias,
+        [Description("Output file path (e.g., 'backup.sql'). Relative paths resolve to workspace root.")] string filePath,
+        [Description("Comma-separated table names to include, or empty for all tables")] string? tables = null,
+        [Description("Maximum rows per table (0 = unlimited). Default 50000.")] int maxRowsPerTable = 50000,
+        CancellationToken ct = default)
+    {
+        var adapter = _cm.GetAdapter(alias);
+        if (adapter is null)
+            return $"Error: Connection '{alias}' not found.";
+
+        try
+        {
+            var allTables = await adapter.ListTablesAsync(ct);
+            if (allTables.Count == 0)
+                return "No tables found.";
+
+            var targetNames = tables?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var tablesToBackup = targetNames is { Length: > 0 }
+                ? allTables.Where(t => targetNames.Contains(t.Name, StringComparer.OrdinalIgnoreCase)).ToList()
+                : allTables.ToList();
+
+            if (tablesToBackup.Count == 0)
+                return "None of the specified tables found.";
+
+            var resolvedPath = ResolveExportPath(filePath);
+            var dir = Path.GetDirectoryName(resolvedPath);
+            if (dir is not null && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var ddlCount = 0;
+            var dataCount = 0;
+            var totalRows = 0L;
+
+            await using var writer = new StreamWriter(resolvedPath);
+
+            await writer.WriteLineAsync("-- ============================================================");
+            await writer.WriteLineAsync($"-- DbMaster Full Backup");
+            await writer.WriteLineAsync($"-- Database: {alias} ({adapter.DbType})");
+            await writer.WriteLineAsync($"-- Exported: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            await writer.WriteLineAsync($"-- Tables: {tablesToBackup.Count}");
+            await writer.WriteLineAsync("-- ============================================================");
+            await writer.WriteLineAsync();
+
+            foreach (var table in tablesToBackup)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                try
+                {
+                    var schema = await adapter.DescribeTableAsync(table.Name, ct);
+                    await writer.WriteLineAsync("-- ============================================================");
+                    await writer.WriteLineAsync($"-- Table: {schema.TableName}");
+                    await writer.WriteLineAsync($"-- Columns: {schema.Columns.Count}, Rows: {table.RowCount:N0}");
+                    await writer.WriteLineAsync("-- ============================================================");
+
+                    // 1. DDL
+                    if (!string.IsNullOrEmpty(schema.CreateSql))
+                    {
+                        await writer.WriteLineAsync(schema.CreateSql + ";");
+                        await writer.WriteLineAsync();
+                        ddlCount++;
+                    }
+                    else
+                    {
+                        await writer.WriteLineAsync(
+                            $"-- (CREATE SQL not available for {adapter.DbType}, schema-only backup)");
+                    }
+
+                    // 2. Data as INSERT statements
+                    if (maxRowsPerTable > 0)
+                    {
+                        var quoting = adapter.DbType switch
+                        {
+                            "postgresql" => "\"",
+                            "mysql" => "`",
+                            "sqlserver" => "\"",
+                            _ => "\""
+                        };
+
+                        var data = await adapter.QueryAsync(
+                            $"SELECT * FROM {quoting}{table.Name}{quoting} LIMIT {maxRowsPerTable}",
+                            maxRowsPerTable, ct);
+
+                        if (data.Rows.Count > 0)
+                        {
+                            var columns = ((Dictionary<string, object?>)data.Rows[0]).Keys.ToList();
+                            var colList = string.Join(", ", columns.Select(c => $"{quoting}{c}{quoting}"));
+
+                            foreach (var row in data.Rows)
+                            {
+                                var dict = (Dictionary<string, object?>)row;
+                                var values = string.Join(", ", columns.Select(c => FormatSqlValue(dict[c], adapter.DbType)));
+                                await writer.WriteLineAsync($"INSERT INTO {quoting}{table.Name}{quoting} ({colList}) VALUES ({values});");
+                            }
+
+                            totalRows += data.Rows.Count;
+                            dataCount++;
+                        }
+
+                        await writer.WriteLineAsync();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await writer.WriteLineAsync(
+                        $"-- ERROR backing up {table.Name}: {ex.Message}");
+                    await writer.WriteLineAsync();
+                }
+            }
+
+            await writer.WriteLineAsync("-- ============================================================");
+            await writer.WriteLineAsync(
+                $"-- Backup complete: {ddlCount} DDLs, {dataCount} data tables, {totalRows:N0} total rows");
+            await writer.WriteLineAsync(
+                $"-- Elapsed: {sw.Elapsed.TotalSeconds:F1}s");
+
+            return $"Backup complete: {ddlCount} DDLs + {dataCount} data tables ({totalRows:N0} rows) " +
+                   $"→ {Path.GetFullPath(resolvedPath)} ({new FileInfo(resolvedPath).Length:N0} bytes). " +
+                   $"Elapsed: {sw.Elapsed.TotalSeconds:F1}s";
+        }
+        catch (Exception ex)
+        {
+            return $"Backup error: {ex.Message}";
+        }
+    }
+
+    /// <summary>格式化 SQL 值：NULL / 字符串引号转义 / 数字原样</summary>
+    private static string FormatSqlValue(object? value, string dbType)
+    {
+        if (value is null || value == DBNull.Value)
+            return "NULL";
+
+        return value switch
+        {
+            string s => $"'{s.Replace("'", "''")}'",
+            char c => $"'{c}'",
+            DateTime dt => $"'{dt:yyyy-MM-dd HH:mm:ss}'",
+            DateTimeOffset dto => $"'{dto:yyyy-MM-dd HH:mm:sszzz}'",
+            TimeSpan ts => $"'{ts}'",
+            Guid g => $"'{g}'",
+            bool b => dbType == "postgresql" ? b.ToString().ToUpperInvariant() : (b ? "1" : "0"),
+            byte[] bytes => dbType == "postgresql"
+                ? $"'\\x{Convert.ToHexString(bytes).ToLowerInvariant()}'"
+                : $"X'{Convert.ToHexString(bytes)}'",
+            _ => value.ToString() ?? "NULL"
+        };
+    }
 }
