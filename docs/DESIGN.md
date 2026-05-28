@@ -174,10 +174,10 @@ AI: db_connect(alias="prod", connStr="Server=127.0.0.1;Port=13001;...", dbType="
 DbMaster/
 ├── DbMaster.slnx
 ├── src/
-│   ├── DbMaster.Core/         ← IDbAdapter, Models, ConnectionManager, AdapterFactory
-│   ├── DbMaster.Adapters/     ← BaseDbAdapter, SqliteAdapter, MySqlAdapter, PostgreSqlAdapter, SqlServerAdapter
-│   ├── DbMaster.Server/       ← HTTP MCP Server (Program.cs + Tools/DatabaseTools.cs)
-│   ├── DbMaster.Stdio/        ← Stdio MCP Server (VS Code 自动启动)
+│   ├── DbMaster.Core/         ← IDbAdapter, Models, ConnectionManager, AdapterFactory, SshTunnelManager
+│   ├── DbMaster.Adapters/     ← BaseDbAdapter(+ValidateTableName), SqliteAdapter, MySqlAdapter, PostgreSqlAdapter(+UnquoteTable), SqlServerAdapter
+│   ├── DbMaster.Server/       ← HTTP MCP Server (Program.cs + Tools/DatabaseTools.cs + Tools/SshTools.cs)
+│   ├── DbMaster.Stdio/        ← Stdio MCP Server (VS Code 自动启动, RuntimeHelpers触发适配器注册)
 │   └── DbMaster.Client/       ← 端到端验证客户端
 ├── tests/
 │   ├── TestSetup.cs           ← xUnit CollectionFixture (触发适配器静态构造)
@@ -470,8 +470,8 @@ tests/DbMaster.Tests/
 
 | 项目 | 包 |
 |------|-----|
-| DbMaster.Core | _无外部依赖_ |
-| DbMaster.Adapters | `Microsoft.Data.Sqlite` / `MySqlConnector` / `Npgsql` / `Microsoft.Data.SqlClient` |
+| DbMaster.Core | `SSH.NET` |
+| DbMaster.Adapters | `Microsoft.Data.Sqlite` / `MySqlConnector` / `Npgsql` / `Microsoft.Data.SqlClient` / `SSH.NET` |
 | DbMaster.Server | `ModelContextProtocol.AspNetCore` |
 | DbMaster.Stdio | `ModelContextProtocol` + `Microsoft.Extensions.Hosting` |
 | DbMaster.Tests | `xUnit` + `ModelContextProtocol` |
@@ -594,12 +594,14 @@ flowchart LR
 | 指标 | 数值 |
 |------|------|
 | 项目数 | 6 |
-| MCP 工具 | 12 (数据库9 + SSH隧道3) |
-| 数据库适配器 | 4 (SQLite/MySQL/PG/SQL Server) |
-| 单元测试 | 17 (全部通过) |
-| Git commits | 16 |
+| MCP 工具 | **12** (数据库9 + SSH隧道3) |
+| 数据库适配器 | **4** (SQLite/MySQL/PG/SQL Server) |
+| 单元测试 | **17** (全部通过) |
+| Git commits | **18** |
 | 编译 | 6/6 ✅ 0 warnings |
 | VS Code 集成 | Stdio 自动启动 ✅ |
+| 实战验证 | ✅ 本地 PostgreSQL (bus库, 28表, 3.6万行) |
+| 远程验证 | ✅ SSH隧道 → 远程 Linux PostgreSQL (24表, 10万+行) |
 
 ### 审查修复历史
 
@@ -610,9 +612,23 @@ flowchart LR
 | #3 | AdapterFactory 实例泄漏 → 不匹配立即 Dispose |
 | #4 | 密码泄露 → BaseDbAdapter.ToString 隐藏连接串 |
 | #5 | 并行优化 → 评估后确认 SQLite 不适合，MySQL/PG 已高效 |
+| #6 | `using var` 作用域 → 改为 `using(){}` block，修复 PG MARS 错误 |
+| #7 | PostgreSQL 大小写 → `UnquoteTable()` + `pg_class.relname` 替代 `regclass` |
+| #8 | 中文 Unicode 转义 → `JavaScriptEncoder.UnsafeRelaxedJsonEscaping` |
+
+### 已实战验证的工具
+
+| 工具 | 本地 PG | 远程 PG (SSH隧道) |
+|------|---------|-------------------|
+| `db_ssh_tunnel` | — | ✅ |
+| `db_connect` | ✅ | ✅ |
+| `db_list_tables` | ✅ 28 表 | ✅ 24 表 |
+| `db_table_stats` | ✅ | ✅ |
+| `db_describe_table` | ✅ 14 列 + 4 索引 | — |
+| `db_execute_query` | ✅ JSON + 中文 | — |
+| `db_disconnect` | ✅ | ✅ |
 
 ### 已知限制（非阻塞）
 
 - Tier2/Tier3 进阶工具待实现
 - MySQL/PG/SQL Server 适配器需 Docker 环境做集成测试
-- 适配器无连接池（每次操作新建连接）
