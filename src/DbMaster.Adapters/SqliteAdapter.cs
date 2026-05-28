@@ -27,10 +27,14 @@ public sealed class SqliteAdapter : BaseDbAdapter
         var tables = new List<TableInfo>();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
-        using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
+        var names = new List<string>();
+        using (var r = await cmd.ExecuteReaderAsync(ct))
         {
-            var name = r.GetString(0);
+            while (await r.ReadAsync(ct))
+                names.Add(r.GetString(0));
+        }
+        foreach (var name in names)
+        {
             using var cnt = conn.CreateCommand();
             cnt.CommandText = $"SELECT COUNT(*) FROM \"{name}\"";
             tables.Add(new TableInfo { Name = name, RowCount = Convert.ToInt64(await cnt.ExecuteScalarAsync(ct)) });

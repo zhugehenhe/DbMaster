@@ -1,5 +1,12 @@
 using DbMaster.Core;
 using DbMaster.Server.Tools;
+using System.Runtime.CompilerServices;
+
+// ⭐ 强制触发所有适配器静态构造函数 → AdapterFactory.Register()
+RuntimeHelpers.RunClassConstructor(typeof(DbMaster.Adapters.SqliteAdapter).TypeHandle);
+RuntimeHelpers.RunClassConstructor(typeof(DbMaster.Adapters.MySqlAdapter).TypeHandle);
+RuntimeHelpers.RunClassConstructor(typeof(DbMaster.Adapters.PostgreSqlAdapter).TypeHandle);
+RuntimeHelpers.RunClassConstructor(typeof(DbMaster.Adapters.SqlServerAdapter).TypeHandle);
 
 var builder = WebApplication.CreateBuilder(args);
 

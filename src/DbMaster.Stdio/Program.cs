@@ -3,11 +3,18 @@ using DbMaster.Server.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Runtime.CompilerServices;
 
 // ============================================================
 // DbMaster Stdio Server — VS Code 自动启动模式
 // ⚠️ stdout = JSON-RPC，日志必须完全禁用
 // ============================================================
+
+// ⭐ 强制触发所有适配器静态构造函数 → AdapterFactory.Register()
+RuntimeHelpers.RunClassConstructor(typeof(DbMaster.Adapters.SqliteAdapter).TypeHandle);
+RuntimeHelpers.RunClassConstructor(typeof(DbMaster.Adapters.MySqlAdapter).TypeHandle);
+RuntimeHelpers.RunClassConstructor(typeof(DbMaster.Adapters.PostgreSqlAdapter).TypeHandle);
+RuntimeHelpers.RunClassConstructor(typeof(DbMaster.Adapters.SqlServerAdapter).TypeHandle);
 
 var builder = Host.CreateApplicationBuilder(args);
 

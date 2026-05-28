@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using DbMaster.Core;
 using ModelContextProtocol.Server;
@@ -14,7 +15,11 @@ namespace DbMaster.Server.Tools;
 public sealed class DatabaseTools
 {
     private readonly ConnectionManager _cm;
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 
     public DatabaseTools(ConnectionManager connectionManager)
     {

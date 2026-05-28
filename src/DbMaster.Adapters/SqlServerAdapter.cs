@@ -28,10 +28,14 @@ public sealed class SqlServerAdapter : BaseDbAdapter
         var tables = new List<TableInfo>();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME";
-        using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
+        var names = new List<string>();
+        using (var r = await cmd.ExecuteReaderAsync(ct))
         {
-            var name = r.GetString(0);
+            while (await r.ReadAsync(ct))
+                names.Add(r.GetString(0));
+        }
+        foreach (var name in names)
+        {
             using var cnt = conn.CreateCommand();
             cnt.CommandText = $"SELECT COUNT(*) FROM [{name.Replace("]", "]]")}]";
             tables.Add(new TableInfo { Name = name, RowCount = Convert.ToInt64(await cnt.ExecuteScalarAsync(ct)) });

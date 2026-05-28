@@ -58,9 +58,17 @@ public abstract class BaseDbAdapter : IDbAdapter
 
     public async Task<bool> TestConnectionAsync(CancellationToken ct = default)
     {
-        await using var conn = CreateConnection();
-        await conn.OpenAsync(ct);
-        return true;
+        var conn = CreateConnection();
+        try
+        {
+            await conn.OpenAsync(ct);
+            return true;
+        }
+        finally
+        {
+            await conn.CloseAsync();
+            await conn.DisposeAsync();
+        }
     }
 
     public async Task<QueryResult> QueryAsync(string sql, int maxRows, CancellationToken ct = default)
