@@ -92,10 +92,10 @@ Alias → dbType → IDbAdapter → DbConnection
 
 | 数据库 | NuGet 包 | 适配器类 | 状态 |
 |--------|----------|----------|------|
-| SQLite | Microsoft.Data.Sqlite | `SqliteAdapter` | 🔲 待实现 |
-| MySQL | MySqlConnector | `MySqlAdapter` | 🔲 待实现 |
-| PostgreSQL | Npgsql | `PostgreSqlAdapter` | 🔲 待实现 |
-| SQL Server | Microsoft.Data.SqlClient | `SqlServerAdapter` | 🔲 待实现 |
+| SQLite | Microsoft.Data.Sqlite | `SqliteAdapter` | ✅ 已完成 |
+| MySQL | MySqlConnector | `MySqlAdapter` | ✅ 已完成 |
+| PostgreSQL | Npgsql | `PostgreSqlAdapter` | ✅ 已完成 |
+| SQL Server | Microsoft.Data.SqlClient | `SqlServerAdapter` | ✅ 已完成 |
 
 ## 工具清单
 
@@ -155,29 +155,19 @@ Alias → dbType → IDbAdapter → DbConnection
 
 ```
 DbMaster/
-├── DbMaster.sln
+├── DbMaster.slnx
 ├── src/
-│   ├── DbMaster.Core/              ← 核心接口 + 模型
-│   │   ├── IDbAdapter.cs
-│   │   ├── ConnectionManager.cs
-│   │   ├── QueryResult.cs
-│   │   └── Models/
-│   ├── DbMaster.Adapters/          ← 数据库适配器实现
-│   │   ├── SqliteAdapter.cs
-│   │   ├── MySqlAdapter.cs
-│   │   ├── PostgreSqlAdapter.cs
-│   │   └── SqlServerAdapter.cs
-│   ├── DbMaster.Server/            ← ASP.NET Core MCP (HTTP)
-│   │   ├── Program.cs
-│   │   └── Tools/
-│   ├── DbMaster.Stdio/             ← Stdio MCP (VS Code 自动启动)
-│   │   └── Program.cs
-│   └── DbMaster.Client/            ← 测试客户端
+│   ├── DbMaster.Core/         ← IDbAdapter, Models, ConnectionManager, AdapterFactory
+│   ├── DbMaster.Adapters/     ← BaseDbAdapter, SqliteAdapter, MySqlAdapter, PostgreSqlAdapter, SqlServerAdapter
+│   ├── DbMaster.Server/       ← HTTP MCP Server (Program.cs + Tools/DatabaseTools.cs)
+│   ├── DbMaster.Stdio/        ← Stdio MCP Server (VS Code 自动启动)
+│   └── DbMaster.Client/       ← 端到端验证客户端
 ├── tests/
-├── docs/
-│   └── DESIGN.md                   ← 本文件
-└── .vscode/
-    └── mcp.json
+│   ├── TestSetup.cs           ← xUnit CollectionFixture (触发适配器静态构造)
+│   ├── ConnectionManagerTests.cs
+│   └── AdapterFactoryTests.cs
+├── docs/DESIGN.md
+└── .vscode/mcp.json
 ```
 
 ## 参考资料
@@ -249,110 +239,32 @@ public class IndexInfo
 }
 ```
 
-## 连接管理器设计
+## 连接管理器设计（最终版）
 
 ```csharp
-/// <summary>
-/// 管理多个数据库连接的生命周期。
-/// 使用 ConcurrentDictionary 保证线程安全。
-/// </summary>
+/// <summary>线程安全的连接池，GetOrAdd+sentinel防竞态</summary>
 public sealed class ConnectionManager : IDisposable
 {
-    private readonly ConcurrentDictionary<string, ConnectionEntry> _connections = new();
-
-    /// <summary>最大并发连接数</summary>
-    public int MaxConnections { get; init; } = 10;
-
-    /// <summary>空闲连接超时（默认30分钟）</summary>
-    public TimeSpan IdleTimeout { get; init; } = TimeSpan.FromMinutes(30);
-
-    /// <summary>建立新连接或替换已有连接</summary>
-    public async Task<string> ConnectAsync(string alias, string connectionString, CancellationToken ct)
-    {
-        if (_connections.Count >= MaxConnections && !_connections.ContainsKey(alias))
-            throw new InvalidOperationException($"Max connections ({MaxConnections}) reached.");
-
-        // 自动检测数据库类型 → 创建对应适配器
-        var adapter = AdapterFactory.Create(connectionString);
-        await adapter.TestConnectionAsync(ct);
-
-        _connections[alias] = new ConnectionEntry(adapter, connectionString, DateTime.UtcNow);
-        return adapter.DbType; // 返回检测到的数据库类型
-    }
-
-    /// <summary>断开并释放指定连接</summary>
-    public bool Disconnect(string alias) => _connections.TryRemove(alias, out _);
-
-    /// <summary>获取适配器（如果超时则自动断开）</summary>
-    public IDbAdapter? GetAdapter(string alias)
-    {
-        if (!_connections.TryGetValue(alias, out var entry)) return null;
-        if (DateTime.UtcNow - entry.LastAccess > IdleTimeout)
-        {
-            Disconnect(alias);
-            return null;
-        }
-        entry.LastAccess = DateTime.UtcNow;
-        return entry.Adapter;
-    }
-
-    /// <summary>列出所有活动连接</summary>
-    public IReadOnlyDictionary<string, ConnectionInfo> ListConnections()
-        => _connections.ToDictionary(kv => kv.Key, kv => new ConnectionInfo
-        {
-            Alias = kv.Key,
-            DbType = kv.Value.Adapter.DbType,
-            ConnectedAt = kv.Value.ConnectedAt,
-            LastAccess = kv.Value.LastAccess,
-        });
-
-    public void Dispose()
-    {
-        foreach (var entry in _connections.Values)
-            entry.Adapter.Dispose();
-        _connections.Clear();
-    }
-
-    private sealed class ConnectionEntry(IDbAdapter adapter, string connStr, DateTime connectedAt)
-    {
-        public IDbAdapter Adapter { get; } = adapter;
-        public string ConnectionString { get; } = connStr;
-        public DateTime ConnectedAt { get; } = connectedAt;
-        public DateTime LastAccess { get; set; } = connectedAt;
-    }
+    // ConnectAsync 使用 GetOrAdd 原子抢占槽位 → 建连接 → 替换 sentinel
+    // GetAdapter 直接 TryRemove+Dispose 避免超时竞态
+    // PendingAdapter 占位用，防止并发超 MaxConnections
 }
 
-public class ConnectionInfo
-{
-    public string Alias { get; set; } = "";
-    public string DbType { get; set; } = "";
-    public DateTime ConnectedAt { get; set; }
-    public DateTime LastAccess { get; set; }
-}
-```
-
-## 适配器工厂
+## 适配器工厂（最终版 — 委托注册模式）
 
 ```csharp
-/// <summary>根据连接字符串自动识别数据库类型并创建适配器</summary>
+/// <summary>委托注册模式，无反射，编译安全</summary>
 public static class AdapterFactory
 {
-    public static IDbAdapter Create(string connectionString)
-    {
-        var cs = new DbConnectionStringBuilder { ConnectionString = connectionString };
+    private static readonly List<AdapterDetector> _detectors = [];
 
-        return cs.TryGetValue("Driver", out _) || cs.TryGetValue("Provider", out _)
-            ? throw new NotSupportedException("ODBC/OleDb not supported. Use native driver.")
-            : connectionString.Contains("Data Source=") && !connectionString.Contains("Server=")
-                ? new SqliteAdapter(connectionString)
-                : connectionString.Contains("Server=") && connectionString.Contains("TrustServerCertificate", StringComparison.OrdinalIgnoreCase)
-                    ? new SqlServerAdapter(connectionString)
-                    : connectionString.Contains("Host=")
-                        ? new PostgreSqlAdapter(connectionString)
-                        : new MySqlAdapter(connectionString); // 默认 MySQL
-    }
+    public delegate IDbAdapter? AdapterDetector(string connectionString);
+
+    public static void Register(AdapterDetector detector) { ... }
+    public static IDbAdapter Create(string connStr, string? dbType = null) { ... }
 }
 ```
+各适配器在静态构造函数中调用 `AdapterFactory.Register()` 自注册。
 
 ## MCP 工具类骨架
 
@@ -657,3 +569,33 @@ flowchart LR
 | Stdio 日志处理 (`ClearProviders`) | `DbMaster.Stdio/Program.cs` |
 | 安全分级 (SELECT/INSERT/DROP) | 三级 confirm 机制 |
 | 路径 API 设计 (`MapMcp("/mcp")`) | HTTP Server |
+
+---
+
+## 📊 项目最终状态（2026-05-28）
+
+| 指标 | 数值 |
+|------|------|
+| 项目数 | 6 |
+| MCP 工具 | 9 (Tier1 全部完成) |
+| 数据库适配器 | 4 (SQLite/MySQL/PG/SQL Server) |
+| 单元测试 | 17 (全部通过) |
+| Git commits | 14 |
+| 编译 | 6/6 ✅ 0 warnings |
+| VS Code 集成 | Stdio 自动启动 ✅ |
+
+### 审查修复历史
+
+| 修复 | 内容 |
+|------|------|
+| #1 | ConnectionManager 竞态 → GetOrAdd + sentinel 原子抢占 |
+| #2 | 表名注入 → ValidateTableName 白名单验证 |
+| #3 | AdapterFactory 实例泄漏 → 不匹配立即 Dispose |
+| #4 | 密码泄露 → BaseDbAdapter.ToString 隐藏连接串 |
+| #5 | 并行优化 → 评估后确认 SQLite 不适合，MySQL/PG 已高效 |
+
+### 已知限制（非阻塞）
+
+- Tier2/Tier3 进阶工具待实现
+- MySQL/PG/SQL Server 适配器需 Docker 环境做集成测试
+- 适配器无连接池（每次操作新建连接）
