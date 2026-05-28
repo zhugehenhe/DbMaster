@@ -123,6 +123,23 @@ Alias → dbType → IDbAdapter → DbConnection
 | `db_execute_script` | 执行 SQL 脚本文件 |
 | `db_query_history` | 查询历史记录 |
 
+### 🔐 SSH 隧道工具（已实现 ✅）
+
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `db_ssh_tunnel` | sshHost, sshUser, sshPassword, remoteHost, remotePort, sshPort | 建立 SSH 端口转发隧道 |
+| `db_ssh_disconnect` | localPort | 关闭指定隧道 |
+| `db_ssh_list` | — | 列出所有活动隧道 |
+
+**使用场景**：数据库端口未公网开放，仅 SSH 可达。
+```
+AI: db_ssh_tunnel(sshHost="jump", user="admin", remoteHost="127.0.0.1", remotePort=3306)
+    → localhost:13001 → 127.0.0.1:3306
+
+AI: db_connect(alias="prod", connStr="Server=127.0.0.1;Port=13001;...", dbType="mysql")
+    → 通过 SSH 隧道连接数据库
+```
+
 ### Tier 3 — 高级工具（第三期）
 
 | 工具 | 说明 |
@@ -577,10 +594,10 @@ flowchart LR
 | 指标 | 数值 |
 |------|------|
 | 项目数 | 6 |
-| MCP 工具 | 9 (Tier1 全部完成) |
+| MCP 工具 | 12 (数据库9 + SSH隧道3) |
 | 数据库适配器 | 4 (SQLite/MySQL/PG/SQL Server) |
 | 单元测试 | 17 (全部通过) |
-| Git commits | 14 |
+| Git commits | 16 |
 | 编译 | 6/6 ✅ 0 warnings |
 | VS Code 集成 | Stdio 自动启动 ✅ |
 
