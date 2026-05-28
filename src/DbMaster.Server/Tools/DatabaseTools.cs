@@ -507,4 +507,307 @@ public sealed class DatabaseTools
             return $"Error finding relations: {ex.Message}";
         }
     }
+
+    // ================================================================
+    // Phase 6.1: 生成 Mermaid ER 图
+    // ================================================================
+
+    [McpServerTool(Name = "db_generate_erd"),
+     Description("Generate a Mermaid ER (Entity-Relationship) diagram from the database schema. Returns Mermaid syntax that renders as a visual diagram. Useful for understanding database structure at a glance.")]
+    public async Task<string> DbGenerateErd(
+        [Description("Connection alias")] string alias,
+        [Description("Comma-separated table names to include, or leave empty for all tables")] string? tables = null,
+        CancellationToken ct = default)
+    {
+        var adapter = _cm.GetAdapter(alias);
+        if (adapter is null)
+            return $"Error: Connection '{alias}' not found.";
+
+        try
+        {
+            var allTables = await adapter.ListTablesAsync(ct);
+            if (allTables.Count == 0)
+                return "No tables found.";
+
+            // Filter if specific tables requested
+            var targetNames = tables?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var tablesToInclude = targetNames is { Length: > 0 }
+                ? allTables.Where(t => targetNames.Contains(t.Name, StringComparer.OrdinalIgnoreCase)).ToList()
+                : allTables.ToList();
+
+            if (tablesToInclude.Count == 0)
+                return $"None of the specified tables found. Available: {string.Join(", ", allTables.Select(t => t.Name))}";
+
+            var mermaid = new List<string> { "```mermaid", "erDiagram" };
+            var relations = new List<string>();
+
+            foreach (var table in tablesToInclude)
+            {
+                try
+                {
+                    var schema = await adapter.DescribeTableAsync(table.Name, ct);
+
+                    // Entity definition with columns
+                    var columns = schema.Columns.Select(c =>
+                    {
+                        var type = c.DataType.Length > 20 ? c.DataType[..20] : c.DataType;
+                        var markers = "";
+                        if (c.IsPrimaryKey) markers += " PK";
+                        return $"        {type} {c.Name}{markers}";
+                    });
+
+                    mermaid.Add($"    {schema.TableName} {{");
+                    mermaid.AddRange(columns);
+                    mermaid.Add("    }");
+                    mermaid.Add("");
+
+                    // Relationships
+                    foreach (var fk in schema.ForeignKeys)
+                    {
+                        // Only include if both tables are in scope
+                        if (tablesToInclude.Any(t =>
+                            string.Equals(t.Name, fk.ReferencedTable, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            relations.Add(
+                                $"    {schema.TableName} ||--o{{ {fk.ReferencedTable} : \"{fk.ColumnName}\"");
+                        }
+                    }
+                }
+                catch
+                {
+                    mermaid.Add($"    {table.Name} {{");
+                    mermaid.Add("        string _unknown_ \"(could not describe)\"");
+                    mermaid.Add("    }");
+                    mermaid.Add("");
+                }
+            }
+
+            if (relations.Count > 0)
+            {
+                mermaid.AddRange(relations.Distinct());
+            }
+
+            mermaid.Add("```");
+            mermaid.Add("");
+            mermaid.Add($"Generated from {tablesToInclude.Count} table(s) with {relations.Distinct().Count()} relationship(s).");
+            mermaid.Add("Paste into any Mermaid-compatible viewer (GitHub, Notion, VS Code Markdown Preview).");
+
+            return string.Join("\n", mermaid);
+        }
+        catch (Exception ex)
+        {
+            return $"Error generating ERD: {ex.Message}";
+        }
+    }
+
+    // ================================================================
+    // Phase 6.2: Schema 对比
+    // ================================================================
+
+    [McpServerTool(Name = "db_compare_schemas"),
+     Description("Compare the schemas of two tables (same alias or different aliases). Reports differences in columns, types, primary keys, foreign keys, and indexes. Useful for finding discrepancies between environments.")]
+    public async Task<string> DbCompareSchemas(
+        [Description("Connection alias for first table")] string alias1,
+        [Description("Table name in first alias")] string tableName1,
+        [Description("Connection alias for second table (can be same as alias1)")] string alias2,
+        [Description("Table name in second alias")] string tableName2,
+        CancellationToken ct = default)
+    {
+        var adapter1 = _cm.GetAdapter(alias1);
+        if (adapter1 is null) return $"Error: Connection '{alias1}' not found.";
+        var adapter2 = _cm.GetAdapter(alias2);
+        if (adapter2 is null) return $"Error: Connection '{alias2}' not found.";
+
+        try
+        {
+            var schema1 = await adapter1.DescribeTableAsync(tableName1, ct);
+            var schema2 = await adapter2.DescribeTableAsync(tableName2, ct);
+
+            var diffs = new List<string>
+            {
+                $"Schema Comparison: [{alias1}] {tableName1} vs [{alias2}] {tableName2}",
+                new string('=', 70),
+            };
+
+            // Compare columns
+            var cols1 = schema1.Columns.ToDictionary(c => c.Name, c => c);
+            var cols2 = schema2.Columns.ToDictionary(c => c.Name, c => c);
+
+            var allCols = cols1.Keys.Union(cols2.Keys).OrderBy(c => c).ToList();
+            var colDiffs = new List<string>();
+
+            foreach (var col in allCols)
+            {
+                var in1 = cols1.TryGetValue(col, out var c1);
+                var in2 = cols2.TryGetValue(col, out var c2);
+
+                if (in1 && !in2)
+                    colDiffs.Add($"  ➕ {col}: only in [{alias1}]");
+                else if (!in1 && in2)
+                    colDiffs.Add($"  ➖ {col}: only in [{alias2}]");
+                else if (c1!.DataType != c2!.DataType)
+                    colDiffs.Add($"  🔄 {col}: type {c1.DataType} → {c2.DataType}");
+                else if (c1.IsNullable != c2.IsNullable)
+                    colDiffs.Add($"  🔄 {col}: nullable {c1.IsNullable} → {c2.IsNullable}");
+                else if (c1.DefaultValue?.ToString() != c2.DefaultValue?.ToString())
+                    colDiffs.Add($"  🔄 {col}: default {c1.DefaultValue} → {c2.DefaultValue}");
+            }
+
+            if (colDiffs.Count > 0)
+            {
+                diffs.Add($"\n📋 Column Differences ({colDiffs.Count}):");
+                diffs.AddRange(colDiffs);
+            }
+            else
+            {
+                diffs.Add("\n📋 Columns: ✅ Identical");
+            }
+
+            // Compare primary keys
+            var pk1 = schema1.PrimaryKeys.OrderBy(x => x).ToList();
+            var pk2 = schema2.PrimaryKeys.OrderBy(x => x).ToList();
+            if (!pk1.SequenceEqual(pk2))
+                diffs.Add($"\n🔑 Primary Key: [{string.Join(",", pk1)}] vs [{string.Join(",", pk2)}]");
+            else
+                diffs.Add($"\n🔑 Primary Key: ✅ Identical ({string.Join(",", pk1)})");
+
+            // Compare foreign keys
+            var fk1Set = schema1.ForeignKeys.Select(f => $"{f.ColumnName}→{f.ReferencedTable}.{f.ReferencedColumn}").ToHashSet();
+            var fk2Set = schema2.ForeignKeys.Select(f => $"{f.ColumnName}→{f.ReferencedTable}.{f.ReferencedColumn}").ToHashSet();
+            var fkOnly1 = fk1Set.Except(fk2Set).ToList();
+            var fkOnly2 = fk2Set.Except(fk1Set).ToList();
+
+            if (fkOnly1.Count > 0 || fkOnly2.Count > 0)
+            {
+                diffs.Add($"\n🔗 Foreign Key Differences:");
+                foreach (var fk in fkOnly1) diffs.Add($"  ➕ [{alias1}]: {fk}");
+                foreach (var fk in fkOnly2) diffs.Add($"  ➖ [{alias2}]: {fk}");
+            }
+            else
+            {
+                diffs.Add($"\n🔗 Foreign Keys: ✅ Identical ({fk1Set.Count} total)");
+            }
+
+            // Compare indexes
+            var idx1Set = schema1.Indexes.Select(i => $"{i.Name}({string.Join(",", i.Columns)}) {(i.IsUnique ? "U" : "")}").ToHashSet();
+            var idx2Set = schema2.Indexes.Select(i => $"{i.Name}({string.Join(",", i.Columns)}) {(i.IsUnique ? "U" : "")}").ToHashSet();
+            var idxOnly1 = idx1Set.Except(idx2Set).ToList();
+            var idxOnly2 = idx2Set.Except(idx1Set).ToList();
+
+            if (idxOnly1.Count > 0 || idxOnly2.Count > 0)
+            {
+                diffs.Add($"\n📑 Index Differences:");
+                foreach (var idx in idxOnly1) diffs.Add($"  ➕ [{alias1}]: {idx}");
+                foreach (var idx in idxOnly2) diffs.Add($"  ➖ [{alias2}]: {idx}");
+            }
+            else
+            {
+                diffs.Add($"\n📑 Indexes: ✅ Identical ({idx1Set.Count} total)");
+            }
+
+            // Summary
+            var totalDiffs = colDiffs.Count + fkOnly1.Count + fkOnly2.Count + idxOnly1.Count + idxOnly2.Count;
+            if (!pk1.SequenceEqual(pk2)) totalDiffs++;
+            diffs.Add($"\n{new string('=', 70)}");
+            diffs.Add(totalDiffs == 0
+                ? "✅ Schemas are identical — no differences found."
+                : $"⚠️  {totalDiffs} difference(s) found between the two schemas.");
+
+            return string.Join("\n", diffs);
+        }
+        catch (Exception ex)
+        {
+            return $"Error comparing schemas: {ex.Message}";
+        }
+    }
+
+    // ================================================================
+    // Phase 6.3: 导出 DDL Schema
+    // ================================================================
+
+    [McpServerTool(Name = "db_export_schema"),
+     Description("Export DDL (CREATE TABLE) statements for all tables to a SQL file. Safer alternative to full database backup — reconstructs the schema without data. Useful for version control, migration, or documentation.")]
+    public async Task<string> DbExportSchema(
+        [Description("Connection alias")] string alias,
+        [Description("Output file path (e.g., 'schema.sql'). Relative paths resolve to workspace root.")] string filePath,
+        [Description("Comma-separated table names, or empty for all")] string? tables = null,
+        CancellationToken ct = default)
+    {
+        var adapter = _cm.GetAdapter(alias);
+        if (adapter is null)
+            return $"Error: Connection '{alias}' not found.";
+
+        try
+        {
+            var allTables = await adapter.ListTablesAsync(ct);
+            if (allTables.Count == 0)
+                return "No tables found.";
+
+            var targetNames = tables?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var tablesToExport = targetNames is { Length: > 0 }
+                ? allTables.Where(t => targetNames.Contains(t.Name, StringComparer.OrdinalIgnoreCase)).ToList()
+                : allTables.ToList();
+
+            if (tablesToExport.Count == 0)
+                return $"None of the specified tables found.";
+
+            var resolvedPath = ResolveExportPath(filePath);
+            var dir = Path.GetDirectoryName(resolvedPath);
+            if (dir is not null && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
+            var exportedCount = 0;
+            await using var writer = new StreamWriter(resolvedPath);
+
+            await writer.WriteLineAsync(
+                $"-- DbMaster Schema Export: {alias} ({adapter.DbType})");
+            await writer.WriteLineAsync(
+                $"-- Exported: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            await writer.WriteLineAsync(
+                $"-- Tables: {tablesToExport.Count}\n");
+
+            foreach (var table in tablesToExport)
+            {
+                try
+                {
+                    var schema = await adapter.DescribeTableAsync(table.Name, ct);
+
+                    if (!string.IsNullOrEmpty(schema.CreateSql))
+                    {
+                        await writer.WriteLineAsync(
+                            $"-- ============================================================");
+                        await writer.WriteLineAsync($"-- Table: {schema.TableName}");
+                        await writer.WriteLineAsync(
+                            $"-- Columns: {schema.Columns.Count}, PK: {string.Join(",", schema.PrimaryKeys)}");
+                        await writer.WriteLineAsync(
+                            $"-- ============================================================");
+                        await writer.WriteLineAsync(schema.CreateSql);
+                        await writer.WriteLineAsync();
+                        exportedCount++;
+                    }
+                    else
+                    {
+                        await writer.WriteLineAsync(
+                            $"-- Table: {schema.TableName} (CREATE SQL not available for {adapter.DbType})");
+                        await writer.WriteLineAsync();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await writer.WriteLineAsync(
+                        $"-- ERROR describing {table.Name}: {ex.Message}");
+                }
+            }
+
+            await writer.WriteLineAsync(
+                $"-- Exported {exportedCount}/{tablesToExport.Count} tables successfully.");
+
+            return $"Exported {exportedCount}/{tablesToExport.Count} table DDLs to {Path.GetFullPath(resolvedPath)}. " +
+                   $"Database type: {adapter.DbType}";
+        }
+        catch (Exception ex)
+        {
+            return $"Error exporting schema: {ex.Message}";
+        }
+    }
 }
