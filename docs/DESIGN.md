@@ -151,3 +151,172 @@ DbMaster/
 - [McpDemo 项目经验](../demo/McpDemo)
 - [ModelContextProtocol C# SDK](https://github.com/modelcontextprotocol/csharp-sdk)
 - [MCP 协议规范](https://modelcontextprotocol.io/specification/latest)
+
+---
+
+## 核心模型定义
+
+```csharp
+/// <summary>查询结果</summary>
+public class QueryResult
+{
+    public int RowCount { get; set; }
+    public bool Truncated { get; set; }
+    public IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows { get; set; } = [];
+    public TimeSpan Elapsed { get; set; }
+}
+
+/// <summary>表信息</summary>
+public class TableInfo
+{
+    public string Name { get; set; } = "";
+    public string? Schema { get; set; }           // PostgreSQL/SQL Server
+    public long RowCount { get; set; }
+    public string? Comment { get; set; }
+}
+
+/// <summary>列信息</summary>
+public class ColumnInfo
+{
+    public string Name { get; set; } = "";
+    public string DataType { get; set; } = "";
+    public bool IsNullable { get; set; }
+    public bool IsPrimaryKey { get; set; }
+    public string? DefaultValue { get; set; }
+    public string? Comment { get; set; }
+}
+
+/// <summary>表结构</summary>
+public class TableSchema
+{
+    public string TableName { get; set; } = "";
+    public IReadOnlyList<ColumnInfo> Columns { get; set; } = [];
+    public IReadOnlyList<string> PrimaryKeys { get; set; } = [];
+    public IReadOnlyList<ForeignKeyInfo> ForeignKeys { get; set; } = [];
+    public IReadOnlyList<IndexInfo> Indexes { get; set; } = [];
+    public string? CreateSql { get; set; }
+}
+```
+
+## 适配器实现要点
+
+### SQLite 适配器（最简单，优先实现）
+
+```csharp
+public sealed class SqliteAdapter : IDbAdapter
+{
+    private readonly SqliteConnection _conn;
+
+    public string DbType => "sqlite";
+
+    public SqliteAdapter(string connectionString)
+    {
+        _conn = new SqliteConnection(connectionString);
+    }
+
+    public async Task<bool> TestConnectionAsync(CancellationToken ct)
+    {
+        await _conn.OpenAsync(ct);
+        return _conn.State == ConnectionState.Open;
+    }
+
+    public async Task<QueryResult> QueryAsync(string sql, int maxRows, CancellationToken ct)
+    {
+        // 使用 SqliteCommand 执行查询，逐行读取
+        // 超过 maxRows 行时截断并标记 Truncated=true
+    }
+    // ... 其他方法
+}
+```
+
+### 各数据库获取表列表的差异
+
+| 数据库 | 获取表列表 SQL | 获取行数 |
+|--------|---------------|----------|
+| SQLite | `SELECT name FROM sqlite_master WHERE type='table'` | `SELECT COUNT(*) FROM "table"` |
+| MySQL | `SHOW TABLES` 或 `SELECT TABLE_NAME FROM information_schema.TABLES` | `SELECT TABLE_ROWS FROM information_schema.TABLES` |
+| PostgreSQL | `SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname='public'` | `SELECT reltuples::bigint FROM pg_class WHERE relname='table'` |
+| SQL Server | `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES` | `sp_spaceused 'table'` 或 `SELECT SUM(rows) FROM sys.partitions` |
+
+> 💡 适配器封装了这些差异，上层 MCP 工具只调用 `adapter.ListTablesAsync()` 即可。
+
+## MCP 工具注册
+
+```csharp
+// Program.cs — Stdio 模式（VS Code 自动启动）
+var builder = Host.CreateApplicationBuilder(args);
+
+// ⚠️ Stdio 关键：stdout 用于 JSON-RPC，必须禁用日志
+builder.Logging.ClearProviders();
+builder.Logging.SetMinimumLevel(LogLevel.None);
+
+builder.Services.AddSingleton<ConnectionManager>();
+builder.Services.AddMcpServer(options =>
+{
+    options.ServerInfo = new() { Name = "DbMaster", Version = "1.0.0" };
+    options.Capabilities = new() { Tools = new() };
+})
+    .WithStdioServerTransport()
+    .WithTools<DatabaseTools>();
+
+await builder.Build().RunAsync();
+```
+
+## 实施路线
+
+### 第一期: 核心骨架 + SQLite（~2h）
+
+| 步骤 | 内容 | 产出 |
+|------|------|------|
+| 1.1 | 创建 `.csproj` + 解决方案 | 7 个项目的解决方案 |
+| 1.2 | 实现 `IDbAdapter` + 核心模型 | `DbMaster.Core` |
+| 1.3 | 实现 `SqliteAdapter` | 首个可用适配器 |
+| 1.4 | 实现 `ConnectionManager` | 连接池管理 |
+| 1.5 | 实现 MCP Tool: `db_connect/list_connections/disconnect` | 连接管理工具 |
+| 1.6 | 实现 MCP Tool: `db_execute_query/list_tables/describe_table` | 查询工具 |
+| 1.7 | 实现 MCP Tool: `db_execute_command/table_stats` | 写操作 + 统计 |
+| 1.8 | 编写单元测试 (InMemory Pipe) | ≥ 15 测试用例 |
+| 1.9 | VS Code MCP 集成 (`mcp.json`) | Stdio 自动启动 |
+
+### 第二期: MySQL + PostgreSQL（~1.5h）
+
+| 步骤 | 内容 |
+|------|------|
+| 2.1 | 安装 `MySqlConnector` + 实现 `MySqlAdapter` |
+| 2.2 | 安装 `Npgsql` + 实现 `PostgreSqlAdapter` |
+| 2.3 | 编写 MySQL/PostgreSQL 专项测试 |
+| 2.4 | `db_compare_schemas` 工具 |
+
+### 第三期: SQL Server + 高级工具（~2h）
+
+| 步骤 | 内容 |
+|------|------|
+| 3.1 | 实现 `SqlServerAdapter` |
+| 3.2 | `db_export_data` / `db_execute_script` |
+| 3.3 | `db_backup` / `db_explain_query` |
+| 3.4 | `db_generate_erd` (Mermaid) |
+
+## 测试策略
+
+```
+tests/DbMaster.Tests/
+├── CoreTests.cs           ← IDbAdapter 接口契约测试
+├── SqliteAdapterTests.cs  ← SQLite 适配器（内存数据库）
+├── MySqlAdapterTests.cs   ← MySQL 适配器（需 Docker 或 TestContainer）
+├── ConnectionManagerTests.cs
+└── DatabaseToolsTests.cs  ← MCP 工具端到端测试（InMemory Pipe）
+```
+
+- **SQLite**: 使用 `Data Source=:memory:` 内存数据库，测试隔离无副作用
+- **MySQL/PG/SQL Server**: 使用 TestContainers（Docker）或 mock 连接
+- **MCP 工具**: 继承 `McpTestBase`（参考 McpDemo 测试模式）
+
+## NuGet 依赖
+
+| 项目 | 包 |
+|------|-----|
+| DbMaster.Core | _无外部依赖_ |
+| DbMaster.Adapters | `Microsoft.Data.Sqlite` / `MySqlConnector` / `Npgsql` / `Microsoft.Data.SqlClient` |
+| DbMaster.Server | `ModelContextProtocol.AspNetCore` |
+| DbMaster.Stdio | `ModelContextProtocol` + `Microsoft.Extensions.Hosting` |
+| DbMaster.Tests | `xUnit` + `ModelContextProtocol` |
