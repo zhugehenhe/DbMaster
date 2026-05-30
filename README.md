@@ -6,8 +6,8 @@
 
 ### 1. 发布为单文件
 ```bash
-dotnet publish src/DbMaster.Stdio -c Release -o publish \
-  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+dotnet publish src/DbMaster.Stdio -c Release -o publish `
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
   -p:IncludeAllContentForSelfExtract=true --self-contained
 ```
 
